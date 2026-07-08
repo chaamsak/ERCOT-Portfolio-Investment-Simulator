@@ -1,4 +1,4 @@
-# Data loader with gridstatus integration and synthetic fallback
+# Data loader with gridstatusio API and synthetic fallback
 # Co-authored with CoCo
 import pandas as pd
 import numpy as np
@@ -11,12 +11,13 @@ except ImportError:
     HAS_DUCKDB = False
 
 try:
-    import gridstatus
-    HAS_GRIDSTATUS = True
+    from gridstatusio import GridStatusClient
+    HAS_GRIDSTATUSIO = True
 except ImportError:
-    HAS_GRIDSTATUS = False
+    HAS_GRIDSTATUSIO = False
 
 CACHE_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "ercot_cache.duckdb")
+GRIDSTATUS_API_KEY = os.environ.get("GRIDSTATUS_API_KEY", "")
 
 
 ERCOT_ZONES = [
@@ -57,23 +58,40 @@ def get_ercot_lmp(days=90, zones=None):
         except Exception:
             pass
 
-    if HAS_GRIDSTATUS:
+    if HAS_GRIDSTATUSIO:
         try:
-            ercot = gridstatus.ERCOT()
+            client = GridStatusClient(GRIDSTATUS_API_KEY)
             end = pd.Timestamp.now(tz="US/Central")
             start = end - pd.Timedelta(days=days)
-            all_dfs = []
-            for zone_id in zone_ids:
-                zone_df = ercot.get_lmp(start=start, end=end, location_type="Zone", location=zone_id)
-                zone_df = zone_df.rename(columns={"LMP": "lmp", "Time": "timestamp"})
-                zone_df["zone"] = zone_id
-                all_dfs.append(zone_df[["timestamp", "lmp", "zone"]])
-            df = pd.concat(all_dfs, ignore_index=True)
+            df = client.get_dataset(
+                dataset="ercot_lmp_by_settlement_point",
+                start=start.strftime("%Y-%m-%d"),
+                end=end.strftime("%Y-%m-%d"),
+                timezone="market",
+            )
+            # Filter to requested zones
+            if "settlement_point" in df.columns:
+                df = df[df["settlement_point"].isin(zone_ids)]
+                df = df.rename(columns={"settlement_point": "zone", "interval_start": "timestamp"})
+                # Find the LMP column
+                lmp_col = next((c for c in df.columns if "lmp" in c.lower()), None)
+                if lmp_col and lmp_col != "lmp":
+                    df = df.rename(columns={lmp_col: "lmp"})
+                df = df[["timestamp", "lmp", "zone"]].copy()
+            elif "location" in df.columns:
+                df = df[df["location"].isin(zone_ids)]
+                df = df.rename(columns={"location": "zone"})
+                lmp_col = next((c for c in df.columns if "lmp" in c.lower()), None)
+                if lmp_col and lmp_col != "lmp":
+                    df = df.rename(columns={lmp_col: "lmp"})
+                if "interval_start" in df.columns:
+                    df = df.rename(columns={"interval_start": "timestamp"})
+                df = df[["timestamp", "lmp", "zone"]].copy()
             _cache_data(df)
-            df["_source"] = "live (ERCOT)"
+            df["_source"] = "live (gridstatus.io API)"
             return df
         except Exception as e:
-            source = f"synthetic (gridstatus error: {type(e).__name__}: {e})"
+            source = f"synthetic (API error: {type(e).__name__}: {e})"
 
     df = _generate_synthetic(days, zone_ids)
     df["_source"] = source
@@ -81,16 +99,71 @@ def get_ercot_lmp(days=90, zones=None):
 
 
 def get_ercot_load(days=365):
-    if HAS_GRIDSTATUS:
+    if HAS_GRIDSTATUSIO and GRIDSTATUS_API_KEY:
         try:
-            ercot = gridstatus.ERCOT()
+            client = GridStatusClient(GRIDSTATUS_API_KEY)
             end = pd.Timestamp.now(tz="US/Central")
             start = end - pd.Timedelta(days=days)
-            df = ercot.get_load(start=start, end=end)
+            df = client.get_dataset(
+                dataset="ercot_load",
+                start=start.strftime("%Y-%m-%d"),
+                end=end.strftime("%Y-%m-%d"),
+                timezone="market",
+            )
+            if "interval_start" in df.columns:
+                df = df.rename(columns={"interval_start": "timestamp"})
+            load_col = next((c for c in df.columns if "load" in c.lower()), None)
+            if load_col and load_col != "load_mw":
+                df = df.rename(columns={load_col: "load_mw"})
+            df["_source"] = "live (gridstatus.io API)"
             return df
         except Exception:
             pass
-    return _generate_synthetic_load(days)
+    df = _generate_synthetic_load(days)
+    df["_source"] = "synthetic"
+    return df
+
+
+def get_ercot_as_prices(days=90):
+    if HAS_GRIDSTATUSIO and GRIDSTATUS_API_KEY:
+        try:
+            client = GridStatusClient(GRIDSTATUS_API_KEY)
+            end = pd.Timestamp.now(tz="US/Central")
+            start = end - pd.Timedelta(days=days)
+            df = client.get_dataset(
+                dataset="ercot_mcpc_dam",
+                start=start.strftime("%Y-%m-%d"),
+                end=end.strftime("%Y-%m-%d"),
+                timezone="market",
+            )
+            if "interval_start" in df.columns:
+                df = df.rename(columns={"interval_start": "timestamp"})
+            df["_source"] = "live (gridstatus.io API)"
+            return df
+        except Exception:
+            pass
+    return _generate_synthetic_as_prices(days)
+
+
+def get_ercot_fuel_mix(days=90):
+    if HAS_GRIDSTATUSIO and GRIDSTATUS_API_KEY:
+        try:
+            client = GridStatusClient(GRIDSTATUS_API_KEY)
+            end = pd.Timestamp.now(tz="US/Central")
+            start = end - pd.Timedelta(days=days)
+            df = client.get_dataset(
+                dataset="ercot_fuel_mix",
+                start=start.strftime("%Y-%m-%d"),
+                end=end.strftime("%Y-%m-%d"),
+                timezone="market",
+            )
+            if "interval_start" in df.columns:
+                df = df.rename(columns={"interval_start": "timestamp"})
+            df["_source"] = "live (gridstatus.io API)"
+            return df
+        except Exception:
+            pass
+    return _generate_synthetic_fuel_mix(days)
 
 
 def _cache_data(df):
@@ -139,3 +212,40 @@ def _generate_synthetic_load(days):
     noise = np.random.normal(0, 2000, hours)
     load = base_load + diurnal + seasonal + noise
     return pd.DataFrame({"timestamp": timestamps, "load_mw": np.maximum(load, 20000)})
+
+
+def _generate_synthetic_as_prices(days):
+    np.random.seed(77)
+    hours = days * 24
+    timestamps = pd.date_range(end=pd.Timestamp.now(), periods=hours, freq="h")
+    df = pd.DataFrame({
+        "timestamp": timestamps,
+        "reg_up": np.maximum(np.random.normal(20, 8, hours), 2),
+        "reg_down": np.maximum(np.random.normal(12, 5, hours), 1),
+        "rrs": np.maximum(np.random.normal(12, 6, hours), 1),
+        "ecrs": np.maximum(np.random.normal(15, 7, hours), 1),
+        "non_spin": np.maximum(np.random.normal(5, 3, hours), 0.5),
+    })
+    df["_source"] = "synthetic"
+    return df
+
+
+def _generate_synthetic_fuel_mix(days):
+    np.random.seed(99)
+    hours = days * 24
+    timestamps = pd.date_range(end=pd.Timestamp.now(), periods=hours, freq="h")
+    solar_shape = np.maximum(np.sin((np.arange(hours) % 24 - 6) * np.pi / 12), 0)
+    df = pd.DataFrame({
+        "timestamp": timestamps,
+        "gas": 25000 + np.random.normal(0, 3000, hours),
+        "wind": 8000 + np.random.normal(0, 4000, hours),
+        "solar": 12000 * solar_shape + np.random.normal(0, 500, hours),
+        "nuclear": np.full(hours, 5100.0),
+        "coal": 3000 + np.random.normal(0, 500, hours),
+        "hydro": 500 + np.random.normal(0, 100, hours),
+        "other": 1000 + np.random.normal(0, 200, hours),
+    })
+    for col in ["gas", "wind", "solar", "coal", "hydro", "other"]:
+        df[col] = np.maximum(df[col], 0)
+    df["_source"] = "synthetic"
+    return df
