@@ -162,7 +162,7 @@ with tabs[0]:
                             key=f"mode_{i}")
                         if asset["revenue_mode"] in ("physical_ppa", "vppa", "hybrid"):
                             asset["ppa_price"] = st.number_input(
-                                "PPA Price ($/MWh)", value=float(asset["ppa_price"]),
+                                "PPA Price ($/MWh)", value=max(20.0, float(asset["ppa_price"])),
                                 min_value=20.0, max_value=120.0, key=f"ppa_{i}")
                             asset["ppa_pct_contracted"] = st.slider(
                                 "% Contracted", 0, 100, asset["ppa_pct_contracted"], key=f"pct_{i}")
