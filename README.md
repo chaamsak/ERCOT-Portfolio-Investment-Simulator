@@ -96,6 +96,27 @@ Each asset can be configured with a different contract structure:
 
 ---
 
+## ERCOT Load Zones
+
+The Market Prices tab supports multi-zone selection. Users can compare prices across zones simultaneously.
+
+| Zone | Description |
+|------|-------------|
+| **LZ_SOUTH (LCRA)** | Load Zone South — covers LCRA service territory (default) |
+| LZ_WEST | Load Zone West — wind-heavy, often lowest prices |
+| LZ_NORTH | Load Zone North — Dallas/Fort Worth metro |
+| LZ_HOUSTON | Load Zone Houston — highest demand center |
+| HB_SOUTH | Hub South — generation-weighted average |
+| HB_NORTH | Hub North — generation-weighted average |
+| HB_WEST | Hub West — generation-weighted average |
+| HB_HOUSTON | Hub Houston — generation-weighted average |
+
+**LZ vs HB**: Load Zones (LZ) are load-weighted settlement prices. Hubs (HB) are generation-weighted. For portfolio economics from a utility perspective (e.g., LCRA), LZ is the more relevant reference.
+
+When multiple zones are selected, an overlay chart shows LMP time series color-coded by zone for direct comparison.
+
+---
+
 ## Scenarios Included
 
 | Scenario | Description |
