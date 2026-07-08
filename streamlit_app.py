@@ -445,6 +445,8 @@ with tabs[4]:
         data_source = df_prices["_source"].iloc[0] if "_source" in df_prices.columns else "unknown"
         if "live" in data_source:
             st.success(f"Data Source: {data_source}")
+        elif "error" in data_source:
+            st.error(f"Data Source: {data_source}")
         else:
             st.warning(f"Data Source: {data_source}")
 
