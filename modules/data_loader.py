@@ -1,23 +1,15 @@
-# Data loader with gridstatusio API and synthetic fallback
-# Co-authored with CoCo
+# Data loader querying Grid Status ERCOT data from Snowflake marketplace share
+
 import pandas as pd
 import numpy as np
 import os
+import streamlit as st
 
 try:
-    import duckdb
-    HAS_DUCKDB = True
+    import snowflake.connector
+    HAS_SNOWFLAKE = True
 except ImportError:
-    HAS_DUCKDB = False
-
-try:
-    from gridstatusio import GridStatusClient
-    HAS_GRIDSTATUSIO = True
-except ImportError:
-    HAS_GRIDSTATUSIO = False
-
-CACHE_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "ercot_cache.duckdb")
-GRIDSTATUS_API_KEY = os.environ.get("GRIDSTATUS_API_KEY", "")
+    HAS_SNOWFLAKE = False
 
 
 ERCOT_ZONES = [
@@ -36,62 +28,47 @@ def _zone_label_to_id(label):
     return label.split(" (")[0]
 
 
+def _get_snowflake_conn():
+    """Create Snowflake connection from Streamlit secrets."""
+    return snowflake.connector.connect(
+        account=st.secrets["SNOWFLAKE_ACCOUNT"],
+        user=st.secrets["SNOWFLAKE_USER"],
+        password=st.secrets["SNOWFLAKE_PASSWORD"],
+        warehouse=st.secrets.get("SNOWFLAKE_WAREHOUSE", "GENTEST"),
+        database="GRID_STATUS__ERCOT_DATASETS",
+        schema="SHARE",
+    )
+
+
 def get_ercot_lmp(days=90, zones=None):
     if zones is None:
         zones = ["LZ_SOUTH"]
     zone_ids = [_zone_label_to_id(z) for z in zones]
-    source = "synthetic (gridstatus not available)"
 
-    if HAS_DUCKDB and os.path.exists(CACHE_PATH):
+    if HAS_SNOWFLAKE:
         try:
-            con = duckdb.connect(CACHE_PATH, read_only=True)
-            df = con.execute(
-                "SELECT * FROM lmp WHERE timestamp > CURRENT_TIMESTAMP - INTERVAL ? DAY",
-                [days]
-            ).fetchdf()
-            con.close()
-            if len(df) > 100:
-                if "zone" in df.columns:
-                    df = df[df["zone"].isin(zone_ids)]
-                df["_source"] = "live (cached)"
-                return df
-        except Exception:
-            pass
-
-    if HAS_GRIDSTATUSIO:
-        try:
-            client = GridStatusClient(GRIDSTATUS_API_KEY)
-            end = pd.Timestamp.now(tz="America/Chicago")
-            start = end - pd.Timedelta(days=days)
-            df = client.get_dataset(
-                dataset="ercot_lmp_by_settlement_point",
-                start=start.strftime("%Y-%m-%d"),
-                end=end.strftime("%Y-%m-%d"),
-                timezone="market",
-            )
-            # Filter to requested zones
-            if "settlement_point" in df.columns:
-                df = df[df["settlement_point"].isin(zone_ids)]
-                df = df.rename(columns={"settlement_point": "zone", "interval_start": "timestamp"})
-                # Find the LMP column
-                lmp_col = next((c for c in df.columns if "lmp" in c.lower()), None)
-                if lmp_col and lmp_col != "lmp":
-                    df = df.rename(columns={lmp_col: "lmp"})
-                df = df[["timestamp", "lmp", "zone"]].copy()
-            elif "location" in df.columns:
-                df = df[df["location"].isin(zone_ids)]
-                df = df.rename(columns={"location": "zone"})
-                lmp_col = next((c for c in df.columns if "lmp" in c.lower()), None)
-                if lmp_col and lmp_col != "lmp":
-                    df = df.rename(columns={lmp_col: "lmp"})
-                if "interval_start" in df.columns:
-                    df = df.rename(columns={"interval_start": "timestamp"})
-                df = df[["timestamp", "lmp", "zone"]].copy()
-            _cache_data(df)
-            df["_source"] = "live (gridstatus.io API)"
+            conn = _get_snowflake_conn()
+            placeholders = ",".join([f"'{z}'" for z in zone_ids])
+            query = f"""
+                SELECT
+                    INTERVAL_START_LOCAL AS timestamp,
+                    LMP AS lmp,
+                    LOCATION AS zone
+                FROM ERCOT_LMP_BY_SETTLEMENT_POINT
+                WHERE INTERVAL_START_LOCAL >= DATEADD(day, -{days}, CURRENT_TIMESTAMP())
+                AND LOCATION IN ({placeholders})
+                AND LOCATION_TYPE = 'Trading Hub'
+                ORDER BY INTERVAL_START_LOCAL
+            """
+            df = pd.read_sql(query, conn)
+            conn.close()
+            df.columns = [c.lower() for c in df.columns]
+            df["_source"] = "live (Snowflake - Grid Status)"
             return df
         except Exception as e:
-            source = f"synthetic (API error: {type(e).__name__}: {e})"
+            source = f"synthetic (Snowflake error: {type(e).__name__}: {e})"
+    else:
+        source = "synthetic (snowflake-connector not installed)"
 
     df = _generate_synthetic(days, zone_ids)
     df["_source"] = source
@@ -99,23 +76,21 @@ def get_ercot_lmp(days=90, zones=None):
 
 
 def get_ercot_load(days=365):
-    if HAS_GRIDSTATUSIO and GRIDSTATUS_API_KEY:
+    if HAS_SNOWFLAKE:
         try:
-            client = GridStatusClient(GRIDSTATUS_API_KEY)
-            end = pd.Timestamp.now(tz="America/Chicago")
-            start = end - pd.Timedelta(days=days)
-            df = client.get_dataset(
-                dataset="ercot_load",
-                start=start.strftime("%Y-%m-%d"),
-                end=end.strftime("%Y-%m-%d"),
-                timezone="market",
-            )
-            if "interval_start" in df.columns:
-                df = df.rename(columns={"interval_start": "timestamp"})
-            load_col = next((c for c in df.columns if "load" in c.lower()), None)
-            if load_col and load_col != "load_mw":
-                df = df.rename(columns={load_col: "load_mw"})
-            df["_source"] = "live (gridstatus.io API)"
+            conn = _get_snowflake_conn()
+            query = f"""
+                SELECT
+                    INTERVAL_START_LOCAL AS timestamp,
+                    LOAD AS load_mw
+                FROM ERCOT_LOAD
+                WHERE INTERVAL_START_LOCAL >= DATEADD(day, -{days}, CURRENT_TIMESTAMP())
+                ORDER BY INTERVAL_START_LOCAL
+            """
+            df = pd.read_sql(query, conn)
+            conn.close()
+            df.columns = [c.lower() for c in df.columns]
+            df["_source"] = "live (Snowflake - Grid Status)"
             return df
         except Exception:
             pass
@@ -125,60 +100,62 @@ def get_ercot_load(days=365):
 
 
 def get_ercot_as_prices(days=90):
-    if HAS_GRIDSTATUSIO and GRIDSTATUS_API_KEY:
+    if HAS_SNOWFLAKE:
         try:
-            client = GridStatusClient(GRIDSTATUS_API_KEY)
-            end = pd.Timestamp.now(tz="America/Chicago")
-            start = end - pd.Timedelta(days=days)
-            df = client.get_dataset(
-                dataset="ercot_mcpc_dam",
-                start=start.strftime("%Y-%m-%d"),
-                end=end.strftime("%Y-%m-%d"),
-                timezone="market",
-            )
-            if "interval_start" in df.columns:
-                df = df.rename(columns={"interval_start": "timestamp"})
-            df["_source"] = "live (gridstatus.io API)"
-            return df
+            conn = _get_snowflake_conn()
+            query = f"""
+                SELECT
+                    INTERVAL_START_LOCAL AS timestamp,
+                    AS_TYPE,
+                    MCPC AS price
+                FROM ERCOT_MCPC_DAM
+                WHERE INTERVAL_START_LOCAL >= DATEADD(day, -{days}, CURRENT_TIMESTAMP())
+                ORDER BY INTERVAL_START_LOCAL
+            """
+            df = pd.read_sql(query, conn)
+            conn.close()
+            df.columns = [c.lower() for c in df.columns]
+            # Pivot AS types into columns
+            if "as_type" in df.columns:
+                pivot = df.pivot_table(index="timestamp", columns="as_type", values="price").reset_index()
+                pivot.columns = [c.lower().replace(" ", "_") for c in pivot.columns]
+                pivot["_source"] = "live (Snowflake - Grid Status)"
+                return pivot
         except Exception:
             pass
     return _generate_synthetic_as_prices(days)
 
 
 def get_ercot_fuel_mix(days=90):
-    if HAS_GRIDSTATUSIO and GRIDSTATUS_API_KEY:
+    if HAS_SNOWFLAKE:
         try:
-            client = GridStatusClient(GRIDSTATUS_API_KEY)
-            end = pd.Timestamp.now(tz="America/Chicago")
-            start = end - pd.Timedelta(days=days)
-            df = client.get_dataset(
-                dataset="ercot_fuel_mix",
-                start=start.strftime("%Y-%m-%d"),
-                end=end.strftime("%Y-%m-%d"),
-                timezone="market",
-            )
-            if "interval_start" in df.columns:
-                df = df.rename(columns={"interval_start": "timestamp"})
-            df["_source"] = "live (gridstatus.io API)"
+            conn = _get_snowflake_conn()
+            query = f"""
+                SELECT
+                    INTERVAL_START_LOCAL AS timestamp,
+                    NATURAL_GAS AS gas,
+                    WIND,
+                    SOLAR,
+                    NUCLEAR,
+                    COAL_AND_LIGNITE AS coal,
+                    HYDRO,
+                    OTHER,
+                    POWER_STORAGE AS storage
+                FROM ERCOT_FUEL_MIX
+                WHERE INTERVAL_START_LOCAL >= DATEADD(day, -{days}, CURRENT_TIMESTAMP())
+                ORDER BY INTERVAL_START_LOCAL
+            """
+            df = pd.read_sql(query, conn)
+            conn.close()
+            df.columns = [c.lower() for c in df.columns]
+            df["_source"] = "live (Snowflake - Grid Status)"
             return df
         except Exception:
             pass
     return _generate_synthetic_fuel_mix(days)
 
 
-def _cache_data(df):
-    if not HAS_DUCKDB:
-        return
-    os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
-    try:
-        con = duckdb.connect(CACHE_PATH)
-        con.execute("CREATE TABLE IF NOT EXISTS lmp (timestamp TIMESTAMP, lmp DOUBLE)")
-        con.execute("DELETE FROM lmp WHERE timestamp < CURRENT_TIMESTAMP - INTERVAL 180 DAY")
-        con.execute("INSERT INTO lmp SELECT * FROM df")
-        con.close()
-    except Exception:
-        pass
-
+# --- Synthetic fallbacks ---
 
 def _generate_synthetic(days, zone_ids=None):
     if zone_ids is None:
@@ -220,11 +197,11 @@ def _generate_synthetic_as_prices(days):
     timestamps = pd.date_range(end=pd.Timestamp.now(), periods=hours, freq="h")
     df = pd.DataFrame({
         "timestamp": timestamps,
-        "reg_up": np.maximum(np.random.normal(20, 8, hours), 2),
-        "reg_down": np.maximum(np.random.normal(12, 5, hours), 1),
+        "regup": np.maximum(np.random.normal(20, 8, hours), 2),
+        "regdn": np.maximum(np.random.normal(12, 5, hours), 1),
         "rrs": np.maximum(np.random.normal(12, 6, hours), 1),
         "ecrs": np.maximum(np.random.normal(15, 7, hours), 1),
-        "non_spin": np.maximum(np.random.normal(5, 3, hours), 0.5),
+        "nspin": np.maximum(np.random.normal(5, 3, hours), 0.5),
     })
     df["_source"] = "synthetic"
     return df
@@ -244,8 +221,9 @@ def _generate_synthetic_fuel_mix(days):
         "coal": 3000 + np.random.normal(0, 500, hours),
         "hydro": 500 + np.random.normal(0, 100, hours),
         "other": 1000 + np.random.normal(0, 200, hours),
+        "storage": 500 + np.random.normal(0, 300, hours),
     })
-    for col in ["gas", "wind", "solar", "coal", "hydro", "other"]:
+    for col in ["gas", "wind", "solar", "coal", "hydro", "other", "storage"]:
         df[col] = np.maximum(df[col], 0)
     df["_source"] = "synthetic"
     return df
