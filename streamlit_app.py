@@ -439,6 +439,14 @@ with tabs[4]:
         st.warning("Select at least one zone.")
     else:
         df_prices = load_price_data(tuple(selected_zones))
+
+        # Data source indicator
+        source = df_prices.attrs.get("source", "unknown")
+        if "live" in source:
+            st.success(f"Data Source: {source}")
+        else:
+            st.warning(f"Data Source: {source} — install gridstatus for real ERCOT data")
+
         df_prices["hour"] = pd.to_datetime(df_prices["timestamp"]).dt.hour
         df_prices["month"] = pd.to_datetime(df_prices["timestamp"]).dt.month
         df_prices["date"] = pd.to_datetime(df_prices["timestamp"]).dt.date
