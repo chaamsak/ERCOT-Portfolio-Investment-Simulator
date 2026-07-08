@@ -61,7 +61,7 @@ def get_ercot_lmp(days=90, zones=None):
     if HAS_GRIDSTATUSIO:
         try:
             client = GridStatusClient(GRIDSTATUS_API_KEY)
-            end = pd.Timestamp.now(tz="US/Central")
+            end = pd.Timestamp.now(tz="America/Chicago")
             start = end - pd.Timedelta(days=days)
             df = client.get_dataset(
                 dataset="ercot_lmp_by_settlement_point",
@@ -102,7 +102,7 @@ def get_ercot_load(days=365):
     if HAS_GRIDSTATUSIO and GRIDSTATUS_API_KEY:
         try:
             client = GridStatusClient(GRIDSTATUS_API_KEY)
-            end = pd.Timestamp.now(tz="US/Central")
+            end = pd.Timestamp.now(tz="America/Chicago")
             start = end - pd.Timedelta(days=days)
             df = client.get_dataset(
                 dataset="ercot_load",
@@ -128,7 +128,7 @@ def get_ercot_as_prices(days=90):
     if HAS_GRIDSTATUSIO and GRIDSTATUS_API_KEY:
         try:
             client = GridStatusClient(GRIDSTATUS_API_KEY)
-            end = pd.Timestamp.now(tz="US/Central")
+            end = pd.Timestamp.now(tz="America/Chicago")
             start = end - pd.Timedelta(days=days)
             df = client.get_dataset(
                 dataset="ercot_mcpc_dam",
@@ -149,7 +149,7 @@ def get_ercot_fuel_mix(days=90):
     if HAS_GRIDSTATUSIO and GRIDSTATUS_API_KEY:
         try:
             client = GridStatusClient(GRIDSTATUS_API_KEY)
-            end = pd.Timestamp.now(tz="US/Central")
+            end = pd.Timestamp.now(tz="America/Chicago")
             start = end - pd.Timedelta(days=days)
             df = client.get_dataset(
                 dataset="ercot_fuel_mix",
