@@ -1,10 +1,9 @@
-# ERCOT Portfolio Simulation & PPA Structuring Tool
+# ERCOT Portfolio Simulation and PPA Structuring Tool
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 from modules.portfolio import (
     ASSET_TEMPLATES, PORTFOLIO_TEMPLATES, create_asset,
@@ -34,7 +33,7 @@ from modules.risks import (
     calc_supply_chain_delays, calc_battery_degradation, calc_forced_outage,
 )
 from modules.scenarios import SCENARIOS, get_scenario_params
-from modules.data_loader import get_ercot_lmp, get_ercot_load
+from modules.data_loader import get_ercot_lmp, get_ercot_load, ERCOT_ZONES
 
 st.set_page_config(page_title="ERCOT Portfolio Simulator", layout="wide")
 st.title("ERCOT Portfolio Investment Simulator")
@@ -138,17 +137,17 @@ with tabs[0]:
             for i, asset in enumerate(st.session_state.portfolio):
                 ppa_badge = ""
                 if asset["revenue_mode"] == "merchant":
-                    ppa_badge = "🔴 Merchant"
+                    ppa_badge = "Merchant"
                 elif asset["revenue_mode"] == "physical_ppa":
-                    ppa_badge = f"🟢 PPA ${asset['ppa_price']}/MWh × {asset['ppa_tenor']}yr"
+                    ppa_badge = f"PPA ${asset['ppa_price']}/MWh x {asset['ppa_tenor']}yr"
                 elif asset["revenue_mode"] == "vppa":
-                    ppa_badge = f"🔵 VPPA ${asset['ppa_price']}/MWh"
+                    ppa_badge = f"VPPA ${asset['ppa_price']}/MWh"
                 elif asset["revenue_mode"] == "tolling":
-                    ppa_badge = f"🟡 Tolling ${asset['tolling_rate_kw_month']}/kW-mo"
+                    ppa_badge = f"Tolling ${asset['tolling_rate_kw_month']}/kW-mo"
                 elif asset["revenue_mode"] == "hybrid":
-                    ppa_badge = f"🟠 Hybrid {asset['ppa_pct_contracted']}% @ ${asset['ppa_price']}"
+                    ppa_badge = f"Hybrid {asset['ppa_pct_contracted']}% @ ${asset['ppa_price']}"
 
-                with st.expander(f"{asset['name']} — {asset['mw']} MW | {ppa_badge}"):
+                with st.expander(f"{asset['name']} - {asset['mw']} MW | {ppa_badge}"):
                     c1, c2, c3 = st.columns(3)
                     with c1:
                         asset["mw"] = st.number_input("MW", value=asset["mw"], key=f"mw_{i}")
@@ -189,7 +188,6 @@ with tabs[0]:
                         st.session_state.portfolio.pop(i)
                         st.rerun()
 
-            # Summary table
             summary_df = pd.DataFrame([
                 {"Asset": a["name"], "MW": a["mw"], "Type": a["type"],
                  "Revenue Mode": a["revenue_mode"],
@@ -212,7 +210,6 @@ with tabs[1]:
         energy_prices_y1 = {"avg": base_energy_price}
         ppa_metrics = calc_ppa_risk_metrics(st.session_state.portfolio, energy_prices_y1, projection_years)
 
-        # KPIs
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Contracted %", f"{ppa_metrics['contracted_pct']:.1f}%")
         k2.metric("Avg PPA Tenor", f"{ppa_metrics['avg_tenor']:.1f} yrs")
@@ -221,20 +218,16 @@ with tabs[1]:
 
         st.divider()
 
-        # PPA vs Merchant comparison
         st.subheader("PPA vs Merchant Comparison")
         col_a, col_b, col_c = st.columns(3)
 
-        # All Merchant scenario
         merchant_portfolio = [a.copy() for a in st.session_state.portfolio]
         for a in merchant_portfolio:
             a["revenue_mode"] = "merchant"
         merchant_result = run_financial_model(merchant_portfolio, params)
 
-        # Current mix
         current_result = run_financial_model(st.session_state.portfolio, params)
 
-        # Fully contracted
         contracted_portfolio = [a.copy() for a in st.session_state.portfolio]
         for a in contracted_portfolio:
             if a["type"] == "storage":
@@ -259,7 +252,6 @@ with tabs[1]:
 
         st.divider()
 
-        # Mark-to-Market
         st.subheader("Mark-to-Market Valuation")
         current_market = st.number_input("Current Market Price ($/MWh)", value=40.0, min_value=10.0, max_value=100.0)
         mtm = calc_mark_to_market(st.session_state.portfolio, current_market)
@@ -274,7 +266,6 @@ with tabs[1]:
 
         st.divider()
 
-        # PPA Optimization
         st.subheader("PPA Mix Optimization")
         max_vol = st.slider("Max Revenue Volatility ($M)", 10, 200, 50)
         if st.button("Optimize PPA Mix"):
@@ -283,14 +274,13 @@ with tabs[1]:
             for name, pct in optimal.items():
                 st.write(f"- {name}: {pct}%")
 
-        # Education section
         with st.expander("PPA Types Explained"):
             st.markdown("""
 **Physical PPA**: Seller delivers physical MWh to buyer at contracted price. Buyer takes volume risk.
 
-**Virtual PPA (VPPA)**: Financial contract for differences. No physical delivery. Net revenue ≈ generation × strike price. Basis risk exists.
+**Virtual PPA (VPPA)**: Financial contract for differences. No physical delivery. Basis risk exists.
 
-**Tolling Agreement**: Buyer pays fixed $/kW-month for dispatch rights. Seller earns guaranteed revenue regardless of dispatch.
+**Tolling Agreement**: Buyer pays fixed $/kW-month for dispatch rights. Seller earns guaranteed revenue.
 
 **Hybrid**: X% contracted at PPA price, remainder at market. Balances certainty and upside.
 
@@ -315,7 +305,6 @@ with tabs[2]:
         ppa_m = calc_ppa_risk_metrics(st.session_state.portfolio, energy_prices_y1, projection_years)
         scores = score_portfolio(st.session_state.portfolio, result, ppa_m)
 
-        # KPI Cards
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total MW", f"{get_total_mw(st.session_state.portfolio):,.0f}")
         c2.metric("Total CAPEX", f"${result['total_capex']:,.0f}M")
@@ -330,7 +319,6 @@ with tabs[2]:
 
         st.divider()
 
-        # CAPEX Breakdown
         col1, col2 = st.columns(2)
         with col1:
             capex_data = [{"Asset": a["name"], "CAPEX_M": a["mw"] * a["capex_per_kw"] * 1000 / 1e6}
@@ -340,7 +328,6 @@ with tabs[2]:
             st.plotly_chart(fig_capex, use_container_width=True)
 
         with col2:
-            # Radar chart
             categories = [k for k in scores if k != "Overall"]
             values = [scores[k] for k in categories]
             fig_radar = go.Figure(go.Scatterpolar(r=values + [values[0]],
@@ -349,7 +336,6 @@ with tabs[2]:
                                      title="Portfolio Score")
             st.plotly_chart(fig_radar, use_container_width=True)
 
-        # Cumulative Cashflow
         years_data = result["yearly_data"]
         cf_df = pd.DataFrame([{"Year": d["year"], "Cumulative ($M)": d["cumulative"]} for d in years_data])
         fig_cf = px.line(cf_df, x="Year", y="Cumulative ($M)", title="Cumulative Cashflow")
@@ -367,7 +353,6 @@ with tabs[3]:
     else:
         result = run_financial_model(st.session_state.portfolio, params)
 
-        # Revenue by asset stacked bar
         rev_data = []
         for yd in result["yearly_data"]:
             for ad in yd["asset_details"]:
@@ -377,7 +362,6 @@ with tabs[3]:
                          title="Net Revenue by Asset per Year")
         st.plotly_chart(fig_rev, use_container_width=True)
 
-        # Tornado sensitivity
         st.subheader("NPV Sensitivity (Tornado)")
         base_npv = result["npv"]
         sensitivities = {}
@@ -409,7 +393,6 @@ with tabs[3]:
         fig_tornado.update_layout(title=f"NPV Sensitivity (Base: ${base_npv:.0f}M)", barmode='overlay')
         st.plotly_chart(fig_tornado, use_container_width=True)
 
-        # Monte Carlo
         st.subheader("Monte Carlo Analysis")
         n_sims = st.selectbox("Simulations", [200, 500, 1000], index=0)
         if st.button("Run Monte Carlo"):
@@ -425,7 +408,6 @@ with tabs[3]:
             fig_mc.add_vline(x=mc["p90"], line_dash="dash", annotation_text="P90")
             st.plotly_chart(fig_mc, use_container_width=True)
 
-        # Cashflow table
         st.subheader("Year-by-Year Cashflow")
         cf_table = pd.DataFrame([
             {"Year": d["year"],
@@ -442,58 +424,72 @@ with tabs[3]:
 with tabs[4]:
     st.header("Market Prices (ERCOT)")
 
+    selected_zones = st.multiselect(
+        "Select Load Zones",
+        ERCOT_ZONES,
+        default=["LZ_SOUTH (LCRA)"],
+        help="LZ_SOUTH corresponds to the LCRA service territory"
+    )
+
     @st.cache_data(ttl=3600)
-    def load_price_data():
-        return get_ercot_lmp(days=90)
+    def load_price_data(zones):
+        return get_ercot_lmp(days=90, zones=zones)
 
-    df_prices = load_price_data()
-    df_prices["hour"] = pd.to_datetime(df_prices["timestamp"]).dt.hour
-    df_prices["month"] = pd.to_datetime(df_prices["timestamp"]).dt.month
-    df_prices["date"] = pd.to_datetime(df_prices["timestamp"]).dt.date
+    if not selected_zones:
+        st.warning("Select at least one zone.")
+    else:
+        df_prices = load_price_data(tuple(selected_zones))
+        df_prices["hour"] = pd.to_datetime(df_prices["timestamp"]).dt.hour
+        df_prices["month"] = pd.to_datetime(df_prices["timestamp"]).dt.month
+        df_prices["date"] = pd.to_datetime(df_prices["timestamp"]).dt.date
 
-    col1, col2 = st.columns(2)
-    with col1:
-        pdc = calc_price_duration_curve(df_prices)
-        fig_pdc = px.line(y=pdc.values, title="Price Duration Curve ($/MWh)",
-                          labels={"y": "LMP ($/MWh)", "x": "Hours"})
-        st.plotly_chart(fig_pdc, use_container_width=True)
+        # Time series by zone
+        if "zone" in df_prices.columns and len(selected_zones) > 1:
+            fig_ts = px.line(df_prices, x="timestamp", y="lmp", color="zone",
+                             title="LMP by Zone ($/MWh)")
+            st.plotly_chart(fig_ts, use_container_width=True)
 
-    with col2:
-        hourly = calc_hourly_profile(df_prices)
-        fig_hourly = px.bar(x=hourly.index, y=hourly.values,
-                            title="Average Price by Hour", labels={"x": "Hour", "y": "$/MWh"})
-        st.plotly_chart(fig_hourly, use_container_width=True)
+        col1, col2 = st.columns(2)
+        with col1:
+            pdc = calc_price_duration_curve(df_prices)
+            fig_pdc = px.line(y=pdc.values, title="Price Duration Curve ($/MWh)",
+                              labels={"y": "LMP ($/MWh)", "x": "Hours"})
+            st.plotly_chart(fig_pdc, use_container_width=True)
 
-    col3, col4 = st.columns(2)
-    with col3:
-        spikes = calc_spike_analysis(df_prices)
-        fig_spikes = px.bar(x=list(spikes.keys()), y=list(spikes.values()),
-                            title="Price Spike Frequency", labels={"x": "Threshold", "y": "Hours"})
-        st.plotly_chart(fig_spikes, use_container_width=True)
+        with col2:
+            hourly = calc_hourly_profile(df_prices)
+            fig_hourly = px.bar(x=hourly.index, y=hourly.values,
+                                title="Average Price by Hour", labels={"x": "Hour", "y": "$/MWh"})
+            st.plotly_chart(fig_hourly, use_container_width=True)
 
-    with col4:
-        arb = calc_bess_arbitrage(df_prices)
-        fig_arb = px.line(y=arb.values, title="BESS Implied Daily Arbitrage ($/MW-day)",
-                          labels={"y": "$/MW-day"})
-        st.plotly_chart(fig_arb, use_container_width=True)
+        col3, col4 = st.columns(2)
+        with col3:
+            spikes = calc_spike_analysis(df_prices)
+            fig_spikes = px.bar(x=list(spikes.keys()), y=list(spikes.values()),
+                                title="Price Spike Frequency", labels={"x": "Threshold", "y": "Hours"})
+            st.plotly_chart(fig_spikes, use_container_width=True)
 
-    # Heatmap
-    heatmap = calc_price_heatmap(df_prices)
-    fig_heat = px.imshow(heatmap, title="Price Heatmap (Hour × Month)",
-                         labels={"x": "Month", "y": "Hour", "color": "$/MWh"},
-                         aspect="auto")
-    st.plotly_chart(fig_heat, use_container_width=True)
+        with col4:
+            arb = calc_bess_arbitrage(df_prices)
+            fig_arb = px.line(y=arb.values, title="BESS Implied Daily Arbitrage ($/MW-day)",
+                              labels={"y": "$/MW-day"})
+            st.plotly_chart(fig_arb, use_container_width=True)
 
-    # PPA Benchmark overlay
-    st.subheader("PPA Benchmark Prices vs Spot Market")
-    benchmarks = get_ppa_benchmark_prices()
-    avg_spot = df_prices["lmp"].mean()
-    st.metric("Average Spot Price (90 days)", f"${avg_spot:.1f}/MWh")
-    bench_df = pd.DataFrame([
-        {"Technology": k, "Low": v["low"], "Mid": v["mid"], "High": v["high"]}
-        for k, v in benchmarks.items()
-    ])
-    st.dataframe(bench_df, use_container_width=True)
+        heatmap = calc_price_heatmap(df_prices)
+        fig_heat = px.imshow(heatmap, title="Price Heatmap (Hour x Month)",
+                             labels={"x": "Month", "y": "Hour", "color": "$/MWh"},
+                             aspect="auto")
+        st.plotly_chart(fig_heat, use_container_width=True)
+
+        st.subheader("PPA Benchmark Prices vs Spot Market")
+        benchmarks = get_ppa_benchmark_prices()
+        avg_spot = df_prices["lmp"].mean()
+        st.metric("Average Spot Price (90 days)", f"${avg_spot:.1f}/MWh")
+        bench_df = pd.DataFrame([
+            {"Technology": k, "Low": v["low"], "Mid": v["mid"], "High": v["high"]}
+            for k, v in benchmarks.items()
+        ])
+        st.dataframe(bench_df, use_container_width=True)
 
 # ============================================================
 # TAB 6: LOAD VS CAPACITY
@@ -504,8 +500,7 @@ with tabs[5]:
     if not st.session_state.portfolio:
         st.warning("Add assets to your portfolio first.")
     else:
-        # Load projection
-        current_peak = 75000  # MW (ERCOT South approx)
+        current_peak = 75000
         years_fwd = projection_years
         load_proj = []
         cap = get_total_mw(st.session_state.portfolio)
@@ -525,7 +520,6 @@ with tabs[5]:
         fig_load.update_layout(title="Demand vs Capacity", yaxis_title="MW")
         st.plotly_chart(fig_load, use_container_width=True)
 
-        # Reserve margin
         reserve_margins = [(cap - row["Peak Demand (MW)"]) / row["Peak Demand (MW)"] * 100
                            for _, row in load_df.iterrows()]
         st.metric("Year 1 Reserve Margin",
@@ -540,14 +534,12 @@ with tabs[6]:
     if not st.session_state.portfolio:
         st.warning("Add assets to your portfolio first.")
     else:
-        # Inertia
         inertia = calc_portfolio_inertia(st.session_state.portfolio)
         c1, c2, c3 = st.columns(3)
-        c1.metric("Physical Inertia (MW·s)", f"{inertia['physical_mw_s']:,.0f}")
-        c2.metric("Synthetic Inertia (MW·s)", f"{inertia['synthetic_mw_s']:,.0f}")
-        c3.metric("Total Inertia (MW·s)", f"{inertia['total_mw_s']:,.0f}")
+        c1.metric("Physical Inertia (MW-s)", f"{inertia['physical_mw_s']:,.0f}")
+        c2.metric("Synthetic Inertia (MW-s)", f"{inertia['synthetic_mw_s']:,.0f}")
+        c3.metric("Total Inertia (MW-s)", f"{inertia['total_mw_s']:,.0f}")
 
-        # Frequency event simulation
         st.subheader("Frequency Event Simulation")
         trip_mw = st.slider("Trip Size (MW)", 500, 2000, 1000)
         sim = simulate_frequency_event(st.session_state.portfolio, trip_mw)
@@ -561,7 +553,6 @@ with tabs[6]:
         st.plotly_chart(fig_freq, use_container_width=True)
         st.metric("Frequency Nadir", f"{sim['nadir']:.3f} Hz at t={sim['nadir_time']:.1f}s")
 
-        # AS Revenue
         st.subheader("Ancillary Services Revenue")
         as_data = calc_as_revenue(st.session_state.portfolio)
         as_df = pd.DataFrame(as_data)
@@ -578,7 +569,6 @@ with tabs[7]:
     if not st.session_state.portfolio:
         st.warning("Add assets to your portfolio first.")
     else:
-        # Congestion
         bus_diff = st.slider("Bus-Zone Price Differential ($/MWh)", 0.0, 10.0, 2.5)
         congestion = calc_congestion_cost(st.session_state.portfolio, bus_diff)
         cong_df = pd.DataFrame(congestion)
@@ -586,7 +576,6 @@ with tabs[7]:
                           title="Annual Congestion Cost by Asset ($M)")
         st.plotly_chart(fig_cong, use_container_width=True)
 
-        # Interconnection
         st.subheader("Interconnection Cost Estimates")
         network_pct = st.slider("Network Upgrade Severity (%)", 0, 100, 50)
         ic_costs = calc_interconnection_costs(st.session_state.portfolio, network_pct)
@@ -595,7 +584,6 @@ with tabs[7]:
         total_ic = sum(c["total"] for c in ic_costs)
         st.metric("Total Interconnection Cost", f"${total_ic:.1f}M")
 
-        # Basis risk for VPPAs
         basis = calc_basis_risk(st.session_state.portfolio)
         if basis:
             st.subheader("VPPA Basis Risk")
@@ -614,11 +602,11 @@ with tabs[8]:
                               "Supply Chain", "Reliability", "Degradation"])
 
         with risk_tabs[0]:
-            peak_temp = st.slider("Peak Temperature (°F)", 90, 120, 105)
+            peak_temp = st.slider("Peak Temperature (F)", 90, 120, 105)
             derating = calc_thermal_derating(st.session_state.portfolio, peak_temp)
             dr_df = pd.DataFrame(derating)
             fig_dr = px.bar(dr_df, x="name", y=["rated_mw", "available_mw"],
-                            barmode="group", title=f"Rated vs Available MW at {peak_temp}°F")
+                            barmode="group", title=f"Rated vs Available MW at {peak_temp}F")
             st.plotly_chart(fig_dr, use_container_width=True)
 
         with risk_tabs[1]:
@@ -633,11 +621,11 @@ with tabs[8]:
             emissions_data, total_co2 = calc_emissions(st.session_state.portfolio)
             em_df = pd.DataFrame(emissions_data)
             st.metric("Total CO2 (tons/yr)", f"{total_co2:,.0f}")
-            fig_em = px.pie(em_df[em_df["co2_tons_yr"] > 0], values="co2_tons_yr",
-                            names="name", title="CO2 Emissions by Asset")
-            st.plotly_chart(fig_em, use_container_width=True)
+            if total_co2 > 0:
+                fig_em = px.pie(em_df[em_df["co2_tons_yr"] > 0], values="co2_tons_yr",
+                                names="name", title="CO2 Emissions by Asset")
+                st.plotly_chart(fig_em, use_container_width=True)
 
-            # Carbon price sensitivity
             carbon_range = np.arange(0, 80, 5)
             carbon_impact = []
             for cp in carbon_range:
@@ -707,12 +695,10 @@ with tabs[9]:
             sc_df = pd.DataFrame(scenario_results)
             st.dataframe(sc_df, use_container_width=True)
 
-            # NPV bar chart
             fig_sc = px.bar(sc_df, x="Scenario", y="NPV ($M)",
                             color="NPV ($M)", color_continuous_scale=["red", "gray", "green"],
                             title="NPV by Scenario")
             st.plotly_chart(fig_sc, use_container_width=True)
 
-        # Scoring methodology
         with st.expander("How Portfolio Scoring Works"):
             st.markdown(SCORING_METHODOLOGY)
