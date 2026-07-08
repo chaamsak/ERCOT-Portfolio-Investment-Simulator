@@ -39,6 +39,7 @@ def get_ercot_lmp(days=90, zones=None):
     if zones is None:
         zones = ["LZ_SOUTH"]
     zone_ids = [_zone_label_to_id(z) for z in zones]
+    source = "synthetic (gridstatus not available)"
 
     if HAS_DUCKDB and os.path.exists(CACHE_PATH):
         try:
@@ -71,11 +72,11 @@ def get_ercot_lmp(days=90, zones=None):
             _cache_data(df)
             df["_source"] = "live (ERCOT)"
             return df
-        except Exception:
-            pass
+        except Exception as e:
+            source = f"synthetic (gridstatus error: {type(e).__name__}: {e})"
 
     df = _generate_synthetic(days, zone_ids)
-    df["_source"] = "synthetic (gridstatus not available)"
+    df["_source"] = source
     return df
 
 
