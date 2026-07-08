@@ -36,6 +36,11 @@ from modules.risks import (
 from modules.scenarios import SCENARIOS, get_scenario_params
 from modules.data_loader import get_ercot_lmp, get_ercot_load, ERCOT_ZONES
 
+# --- Load API key from Streamlit secrets into environment ---
+import os
+if "GRIDSTATUS_API_KEY" in st.secrets:
+    os.environ["GRIDSTATUS_API_KEY"] = st.secrets["GRIDSTATUS_API_KEY"]
+
 st.set_page_config(page_title="ERCOT Portfolio Simulator", layout="wide")
 st.title("ERCOT Portfolio Investment Simulator")
 
