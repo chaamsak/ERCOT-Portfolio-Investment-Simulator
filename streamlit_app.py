@@ -1,5 +1,5 @@
 # ERCOT Portfolio Simulation and PPA Structuring Tool
-# Co-authored with CoCo
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -35,11 +35,6 @@ from modules.risks import (
 )
 from modules.scenarios import SCENARIOS, get_scenario_params
 from modules.data_loader import get_ercot_lmp, get_ercot_load, ERCOT_ZONES
-
-# --- Load API key from Streamlit secrets into environment ---
-import os
-if "GRIDSTATUS_API_KEY" in st.secrets:
-    os.environ["GRIDSTATUS_API_KEY"] = st.secrets["GRIDSTATUS_API_KEY"]
 
 st.set_page_config(page_title="ERCOT Portfolio Simulator", layout="wide")
 st.title("ERCOT Portfolio Investment Simulator")
@@ -445,6 +440,12 @@ with tabs[4]:
         st.warning("Select at least one zone.")
     else:
         df_prices = load_price_data(tuple(selected_zones))
+
+        # Debug: show raw columns and source
+        with st.expander("Debug: Data Info"):
+            st.write("Columns:", list(df_prices.columns))
+            st.write("Shape:", df_prices.shape)
+            st.write("First rows:", df_prices.head(3))
 
         # Data source indicator
         data_source = df_prices["_source"].iloc[0] if "_source" in df_prices.columns else "unknown"
