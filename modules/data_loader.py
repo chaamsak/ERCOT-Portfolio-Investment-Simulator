@@ -1,5 +1,4 @@
 # Data loader with gridstatus integration and synthetic fallback
-
 import pandas as pd
 import numpy as np
 import os
