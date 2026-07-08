@@ -1,4 +1,5 @@
 # ERCOT Portfolio Simulation and PPA Structuring Tool
+# Co-authored with CoCo
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -438,9 +439,10 @@ with tabs[4]:
     if not selected_zones:
         st.warning("Select at least one zone.")
     else:
-        df_prices, data_source = load_price_data(tuple(selected_zones))
+        df_prices = load_price_data(tuple(selected_zones))
 
         # Data source indicator
+        data_source = df_prices["_source"].iloc[0] if "_source" in df_prices.columns else "unknown"
         if "live" in data_source:
             st.success(f"Data Source: {data_source}")
         else:
