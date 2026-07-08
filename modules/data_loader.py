@@ -1,4 +1,5 @@
 # Data loader with gridstatus integration and synthetic fallback
+# Co-authored with CoCo
 import pandas as pd
 import numpy as np
 import os
@@ -50,7 +51,8 @@ def get_ercot_lmp(days=90, zones=None):
             if len(df) > 100:
                 if "zone" in df.columns:
                     df = df[df["zone"].isin(zone_ids)]
-                return df, "live (cached)"
+                df["_source"] = "live (cached)"
+                return df
         except Exception:
             pass
 
@@ -67,12 +69,14 @@ def get_ercot_lmp(days=90, zones=None):
                 all_dfs.append(zone_df[["timestamp", "lmp", "zone"]])
             df = pd.concat(all_dfs, ignore_index=True)
             _cache_data(df)
-            return df, "live (ERCOT)"
+            df["_source"] = "live (ERCOT)"
+            return df
         except Exception:
             pass
 
     df = _generate_synthetic(days, zone_ids)
-    return df, "synthetic (gridstatus not available)"
+    df["_source"] = "synthetic (gridstatus not available)"
+    return df
 
 
 def get_ercot_load(days=365):
