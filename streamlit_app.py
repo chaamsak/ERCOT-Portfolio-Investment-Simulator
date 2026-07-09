@@ -595,21 +595,33 @@ with tabs[5]:
         st.plotly_chart(fig_growth, use_container_width=True)
 
         # When does new demand exceed portfolio?
-        crossover_year = next((row["Year"] for _, row in growth_df.iterrows()
-                               if row["Cumulative New Demand (MW)"] > row["Portfolio Capacity (MW)"]), None)
+        # Only compare AFTER full build (ignore construction period)
+        full_capacity_year = None
+        for y in range(years_fwd):
+            yr = y + 1
+            available = get_portfolio_capacity_by_year(st.session_state.portfolio, yr)
+            if available >= cap * 0.95:
+                full_capacity_year = yr
+                break
 
-        # Portfolio as % of zone demand
+        # Crossover: when does cumulative new demand exceed portfolio (after full build)
+        crossover_year = None
+        for _, row in growth_df.iterrows():
+            if full_capacity_year and row["Year"] >= full_capacity_year:
+                if row["Cumulative New Demand (MW)"] > row["Portfolio Capacity (MW)"]:
+                    crossover_year = row["Year"]
+                    break
+
+        # Year 1 available MW (what's actually online)
+        yr1_available = get_portfolio_capacity_by_year(st.session_state.portfolio, 1)
         final_portfolio_mw = get_portfolio_capacity_by_year(st.session_state.portfolio, years_fwd)
-        pct_of_zone = cap / current_peak * 100
-        pct_of_new = final_portfolio_mw / cumulative_growth[-1]["Cumulative New Demand (MW)"] * 100 if cumulative_growth else 0
-        full_capacity_year = next((y + 1 for y in range(years_fwd)
-                                   if get_portfolio_capacity_by_year(st.session_state.portfolio, y + 1) >= cap * 0.99), 1)
 
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Full Portfolio Online", f"Year {full_capacity_year}")
-        c2.metric("Portfolio vs 20yr New Demand", f"{pct_of_new:.0f}%")
-        c3.metric("Demand Exceeds Portfolio", f"Year {crossover_year}" if crossover_year else "Never (within horizon)")
-        c4.metric("Peak Capacity (at full build)", f"{cap:,.0f} MW")
+        c1.metric("Full Portfolio Online", f"Year {full_capacity_year}" if full_capacity_year else f"Year {years_fwd}+")
+        c2.metric("Year 1 Available", f"{yr1_available:,.0f} MW",
+                  delta=f"{yr1_available/cap*100:.0f}% of {cap:,.0f} MW" if cap > 0 else "")
+        c3.metric("Demand Exceeds Portfolio", f"Year {crossover_year:.0f}" if crossover_year else "Never (within horizon)")
+        c4.metric(f"Year {years_fwd} Capacity (w/ degradation)", f"{final_portfolio_mw:,.0f} MW")
 
 # ============================================================
 # TAB 7: FREQUENCY & RELIABILITY
