@@ -1,4 +1,5 @@
 # Portfolio asset definitions with all 12 generation types for ERCOT
+# Co-authored with CoCo
 
 ASSET_TEMPLATES = {
     "BESS (4hr)": {
@@ -55,7 +56,7 @@ ASSET_TEMPLATES = {
         "synthetic_inertia": False, "as_participation_pct": 10,
         "heat_rate": 6800, "var_om": 3.5, "co2_per_mwh": 0.37,
         "capacity_factor": 0.85,
-        "revenue_mode": "physical_ppa", "ppa_price": 55, "ppa_escalation": 2.0,
+        "revenue_mode": "physical_ppa", "ppa_price": 65, "ppa_escalation": 2.0,
         "ppa_tenor": 20, "ppa_pct_contracted": 80, "ppa_start_year": 1,
         "ppa_buyer_type": "Data Center", "ppa_credit_quality": "Investment Grade (IG)",
         "ppa_curtailment_allowance": 3, "ppa_shape_requirement": "Baseload",
