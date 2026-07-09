@@ -86,11 +86,14 @@ def calc_asset_cashflow(asset, year, prices, carbon_price=0):
 
         fuel_type = asset.get("fuel_type", "gas")
         if fuel_type == "nuclear":
+            # Nuclear: yr_prices["nuclear"] is already in $/MWh
             fuel_cost = generation * yr_prices["nuclear"] / 1e6
         elif fuel_type == "coal":
-            fuel_cost = generation * heat_rate * yr_prices["coal"] / 1e6 / 1e6 * 1e6
+            # heat_rate BTU/kWh × $/MMBtu × generation MWh × 1000 kWh/MWh / 1e6 BTU/MMBtu → $ → /1e6 → $M
+            fuel_cost = generation * heat_rate * yr_prices["coal"] / 1e3 / 1e6
         else:
-            fuel_cost = generation * heat_rate * yr_prices["gas"] / 1e6 / 1e6 * 1e6
+            # Gas: same unit conversion
+            fuel_cost = generation * heat_rate * yr_prices["gas"] / 1e3 / 1e6
 
         if mode == "physical_ppa":
             ppa_pct = asset["ppa_pct_contracted"] / 100
