@@ -51,8 +51,8 @@ Every input instantly updates all outputs. The tool forces you to see trade-offs
 | 2. PPA & Offtake | Compare merchant vs contracted, MTM valuation, optimize PPA mix |
 | 3. Executive Summary | KPIs at a glance, CAPEX pie chart, radar score, cumulative cashflow |
 | 4. Financial Model | Revenue waterfall, tornado sensitivity, Monte Carlo, cashflow table |
-| 5. Market Prices | Price duration curve, hourly profile, spike analysis, BESS arbitrage |
-| 6. Load vs Capacity | Demand projection with data center growth, reserve margin |
+| 5. Market Prices | Price duration curve, hourly profile, spike analysis, BESS arbitrage, zone selector |
+| 6. Load vs Capacity | Zone demand forecast with phased portfolio ramp-up, new demand vs capacity gap |
 | 7. Frequency | Inertia calculation, frequency event simulation, AS revenue breakdown |
 | 8. Transmission | Congestion costs, interconnection estimates, VPPA basis risk |
 | 9. Engineering Risks | Thermal derating, gas supply, emissions, supply chain, degradation |
@@ -109,6 +109,46 @@ price[hour] = base + diurnal + seasonal + noise + spikes
 | Zone offsets | West -$3, Houston +$4 | Reflects real congestion patterns |
 
 **Important**: The financial model (NPV, IRR, Monte Carlo) does NOT use this market data. It uses the sidebar assumptions (base price, escalation, volatility) to project forward. Tab 5 provides **market context** — validating that your assumptions are reasonable relative to recent observed prices.
+
+---
+
+## Load vs Capacity — How Tab 6 Works
+
+Tab 6 has two charts that answer different questions:
+
+### Chart 1: Absolute Demand vs Portfolio
+Shows total zone peak demand (baseline + all growth) vs your portfolio capacity as assets come online. Answers: "How big is our portfolio relative to the whole zone?"
+
+### Chart 2: Portfolio vs New Demand Growth
+Shows ONLY the incremental new load being added to the zone (starting from zero), compared to your portfolio ramping up through construction. Answers: "Can our portfolio absorb the new demand coming into the zone?"
+
+### How the portfolio ramp-up works:
+Each asset has a construction time. The green line on the chart starts at 0 and grows as assets reach COD (Commercial Operation Date), then slowly declines due to degradation:
+
+| Asset | COD | Why |
+|-------|-----|-----|
+| Flex/DR | Month 6 | Controls and contracts only |
+| Solar | Month 14 | Panels and racking, fast |
+| BESS (2hr) | Month 14 | Smaller footprint |
+| BESS (4hr) | Month 18 | Larger battery install |
+| RICE Peaker | Month 22 | Modular but needs gas interconnection |
+| Wind | Month 24 | Foundation and tower |
+| Combined Cycle | Month 36 | Major construction, environmental permits |
+
+### The 4 metrics explained:
+
+| Metric | What it means |
+|--------|---------------|
+| **Full Portfolio Online** | Year when 95%+ of total capacity is available (e.g., Year 3 for CC-heavy portfolios) |
+| **Year 1 Available** | How many MW are actually online at end of Year 1 (often only fast assets like solar) |
+| **Demand Exceeds Portfolio** | Year when new zone demand surpasses portfolio capacity. **Only counted after Full Portfolio Online** — ignores construction gap |
+| **Year N Capacity (w/ degradation)** | Portfolio delivery at end of horizon after battery fade and thermal degradation |
+
+### Example — Balanced 2GW, LZ_SOUTH (LCRA), 20-year horizon:
+- **Full Portfolio Online**: Year 3 (CC takes 36 months)
+- **Year 1 Available**: ~400 MW (only Solar is commissioning, BESS not yet done)
+- **Demand Exceeds Portfolio**: Year 8-10 (depends on DC conversion rate in sidebar)
+- **Year 20 Capacity**: ~1,700 MW (BESS lost ~35% capacity over 17 years of operation)
 
 ---
 
@@ -185,6 +225,9 @@ Opens at http://localhost:8501
 ---
 
 
+
+---
+
 ## What This Tool Is Not
 
 - **Not a market forecast** — it doesn't predict prices, it models consequences of your assumptions
@@ -240,7 +283,7 @@ A structured way to say: "Under these 6 futures, across these 9 dimensions, Port
 
 ## How PPA Works in This App
 
-Each asset has 5 revenue modes you can choose independently:
+The app does **NOT** restrict you to PPAs. Each asset has 5 revenue modes you can choose independently:
 
 | Mode | What happens to revenue |
 |------|------------------------|
@@ -277,4 +320,4 @@ Portfolio example:
 
 ## License
 
-Personal tool — not for redistribution.
+Internal tool — not for redistribution.
