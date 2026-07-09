@@ -182,7 +182,7 @@ with tabs[0]:
                                 key=f"buyer_{i}")
                         if asset["revenue_mode"] == "tolling":
                             asset["tolling_rate_kw_month"] = st.number_input(
-                                "Tolling Rate ($/kW-mo)", value=float(asset["tolling_rate_kw_month"]),
+                                "Tolling Rate ($/kW-mo)", value=max(4.0, float(asset["tolling_rate_kw_month"])),
                                 min_value=4.0, max_value=20.0, key=f"toll_{i}")
 
                     if st.button("Remove", key=f"rm_{i}"):
