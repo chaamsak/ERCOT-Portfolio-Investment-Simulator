@@ -517,30 +517,53 @@ with tabs[5]:
     if not st.session_state.portfolio:
         st.warning("Add assets to your portfolio first.")
     else:
-        current_peak = 75000
+        # Zone selection for demand context
+        zone_peaks = {
+            "LZ_SOUTH (LCRA)": 12000,
+            "LZ_HOUSTON": 22000,
+            "LZ_NORTH": 20000,
+            "LZ_WEST": 8000,
+            "All ERCOT": 75000,
+        }
+        demand_zone = st.selectbox("Demand Zone", list(zone_peaks.keys()),
+                                    help="Select the zone your portfolio is serving. LZ_SOUTH = LCRA territory.")
+        current_peak = zone_peaks[demand_zone]
+
+        # Scale growth proportionally to zone size
+        zone_fraction = current_peak / 75000
+        zone_organic = int(organic_growth * zone_fraction)
+        zone_dc = int(dc_announcements * zone_fraction)
+
+        st.caption(f"Zone base peak: {current_peak:,} MW | Organic growth: ~{zone_organic} MW/yr | DC growth: ~{zone_dc} MW announced")
+
         years_fwd = projection_years
         load_proj = []
         cap = get_total_mw(st.session_state.portfolio)
 
+        peak = current_peak
         for y in range(years_fwd):
-            growth = organic_growth + dc_announcements * (dc_conversion / 100) * (0.1 if y < 3 else 0.05)
-            current_peak += growth
-            load_proj.append({"Year": y + 1, "Peak Demand (MW)": current_peak,
+            growth = zone_organic + zone_dc * (dc_conversion / 100) * (0.1 if y < 3 else 0.05)
+            peak += growth
+            load_proj.append({"Year": y + 1, "Peak Demand (MW)": peak,
                               "Portfolio Capacity (MW)": cap})
 
         load_df = pd.DataFrame(load_proj)
         fig_load = go.Figure()
         fig_load.add_trace(go.Scatter(x=load_df["Year"], y=load_df["Peak Demand (MW)"],
-                                       name="Projected Demand", line=dict(color="red")))
+                                       name=f"Projected Demand ({demand_zone})", line=dict(color="red")))
         fig_load.add_trace(go.Scatter(x=load_df["Year"], y=load_df["Portfolio Capacity (MW)"],
                                        name="Portfolio Capacity", line=dict(color="green")))
-        fig_load.update_layout(title="Demand vs Capacity", yaxis_title="MW")
+        fig_load.update_layout(title=f"Demand vs Capacity — {demand_zone}", yaxis_title="MW")
         st.plotly_chart(fig_load, use_container_width=True)
 
-        reserve_margins = [(cap - row["Peak Demand (MW)"]) / row["Peak Demand (MW)"] * 100
-                           for _, row in load_df.iterrows()]
-        st.metric("Year 1 Reserve Margin",
-                  f"{reserve_margins[0]:.1f}%" if reserve_margins else "N/A")
+        # Portfolio as % of zone demand
+        pct_of_zone = cap / current_peak * 100
+        reserve_margin = (cap - load_proj[0]["Peak Demand (MW)"]) / load_proj[0]["Peak Demand (MW)"] * 100
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Portfolio as % of Zone Peak", f"{pct_of_zone:.1f}%")
+        c2.metric("Year 1 Reserve Contribution", f"{reserve_margin:.1f}%")
+        c3.metric(f"Zone Peak ({demand_zone})", f"{current_peak:,} MW")
 
 # ============================================================
 # TAB 7: FREQUENCY & RELIABILITY
