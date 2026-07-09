@@ -1,11 +1,10 @@
-# Financial forecast engine: NPV, IRR, Monte Carlo
+# Financial forecast engine with NPV, IRR, and Monte Carlo simulation
 # Co-authored with CoCo
 import numpy as np
 from scipy.optimize import brentq
 
 
 def build_energy_prices(base_price, escalation, peak_ratio, volatility, gas_price, gas_escalation, years):
-    """Build year-by-year energy price model."""
     prices = {}
     for y in range(1, years + 1):
         avg = base_price * (1 + escalation / 100) ** y
@@ -14,20 +13,23 @@ def build_energy_prices(base_price, escalation, peak_ratio, volatility, gas_pric
         spread = peak - offpeak
         spike_premium = avg * volatility * 0.3
         gas = gas_price * (1 + gas_escalation / 100) ** y
+        # Nuclear fuel: ~$8/MWh, very stable (uranium price + enrichment + disposal)
+        nuclear = 8.0 * (1.01) ** y
+        # Coal: ~$2.50/MMBtu, modest escalation
+        coal = 2.50 * (1.02) ** y
         prices[y] = {
             "avg": avg, "peak": peak, "offpeak": offpeak,
             "spread": spread, "spike_premium": spike_premium,
-            "gas": gas,
+            "gas": gas, "nuclear": nuclear, "coal": coal,
         }
     return prices
 
 
 def calc_asset_cashflow(asset, year, prices, carbon_price=0):
-    """Calculate net cashflow for one asset in one year."""
     mw = asset["mw"]
     cf = asset["capacity_factor"]
     degradation = (1 - asset["degradation_pct_yr"] / 100) ** year
-    fixed_om = mw * asset["fixed_om_per_kw_yr"] * 1000 / 1e6  # $M
+    fixed_om = mw * asset["fixed_om_per_kw_yr"] * 1000 / 1e6
     yr_prices = prices[year]
     mode = asset["revenue_mode"]
 
@@ -37,8 +39,8 @@ def calc_asset_cashflow(asset, year, prices, carbon_price=0):
         else:
             duration = asset["duration_hrs"]
             arbitrage = mw * duration * 365 * yr_prices["spread"] * asset["rte"] * 0.70 / 1e6
-            spike_rev = 50 * mw * yr_prices["spike_premium"] * 0.70 / 1e6  # ~50 spike hours
-            as_rev = mw * (asset["as_participation_pct"] / 100) * 15 * 8760 / 1e6  # $15/MW avg AS
+            spike_rev = 50 * mw * yr_prices["spike_premium"] * 0.70 / 1e6
+            as_rev = mw * (asset["as_participation_pct"] / 100) * 15 * 8760 / 1e6
             revenue = (arbitrage + spike_rev + as_rev) * degradation
         augmentation = 0
         if asset["augmentation_year"] > 0 and year == asset["augmentation_year"]:
@@ -48,7 +50,7 @@ def calc_asset_cashflow(asset, year, prices, carbon_price=0):
     elif asset["type"] == "peaker":
         heat_rate = asset["heat_rate"]
         gas = yr_prices["gas"]
-        marginal_cost = heat_rate * gas / 1e6 * 1000 + asset["var_om"]  # $/MWh
+        marginal_cost = heat_rate * gas / 1e6 * 1000 + asset["var_om"]
         dispatch_hours = cf * 8760
         energy_margin = max(0, yr_prices["avg"] * 1.3 - marginal_cost)
         if mode in ("physical_ppa", "hybrid"):
@@ -60,7 +62,6 @@ def calc_asset_cashflow(asset, year, prices, carbon_price=0):
             revenue = mw * asset["tolling_rate_kw_month"] * 12 * 1000 / 1e6
         else:
             revenue = mw * dispatch_hours * energy_margin / 1e6
-        # AS revenue for offline hours
         offline_frac = 1 - cf
         as_rev = mw * offline_frac * (asset["as_participation_pct"] / 100) * 5 * 8760 / 1e6
         carbon_cost = mw * dispatch_hours * asset["co2_per_mwh"] * carbon_price / 1e6
@@ -69,10 +70,20 @@ def calc_asset_cashflow(asset, year, prices, carbon_price=0):
     elif asset["type"] == "baseload":
         generation = mw * cf * 8760 * degradation
         heat_rate = asset["heat_rate"]
-        gas = yr_prices["gas"]
-        fuel_cost = generation * heat_rate * gas / 1e6 / 1e6
         var_om_cost = generation * asset["var_om"] / 1e6
         carbon_cost = generation * asset["co2_per_mwh"] * carbon_price / 1e6
+
+        # Fuel cost depends on fuel type
+        fuel_type = asset.get("fuel_type", "gas")
+        if fuel_type == "nuclear":
+            # Nuclear fuel cost in $/MWh (already per MWh, not per MMBtu)
+            fuel_cost = generation * yr_prices["nuclear"] / 1e6
+        elif fuel_type == "coal":
+            # Coal: heat_rate (BTU/kWh) × coal price ($/MMBtu) → $/MWh
+            fuel_cost = generation * heat_rate * yr_prices["coal"] / 1e6 / 1e6 * 1e6
+        else:
+            # Gas: heat_rate (BTU/kWh) × gas price ($/MMBtu)
+            fuel_cost = generation * heat_rate * yr_prices["gas"] / 1e6 / 1e6 * 1e6
 
         if mode == "physical_ppa":
             ppa_pct = asset["ppa_pct_contracted"] / 100
@@ -103,9 +114,9 @@ def calc_asset_cashflow(asset, year, prices, carbon_price=0):
         net = revenue - fixed_om
 
     elif asset["type"] == "flex":
-        service_fee = mw * 50 * 1000 / 1e6  # $50/kW-yr
+        service_fee = mw * 50 * 1000 / 1e6
         events = 20
-        event_rev = events * mw * yr_prices["peak"] * 4 / 1e6  # 4hr events
+        event_rev = events * mw * yr_prices["peak"] * 4 / 1e6
         net = service_fee + event_rev - fixed_om
 
     else:
@@ -114,8 +125,20 @@ def calc_asset_cashflow(asset, year, prices, carbon_price=0):
     return net
 
 
+def calc_effective_capex(asset, discount_rate):
+    """
+    Adds Interest During Construction (IDC) to CAPEX.
+    During construction, capital is drawn linearly. Average drawn = CAPEX/2.
+    IDC = CAPEX/2 × WACC × construction_years
+    This penalizes long-build assets (nuclear, PSH) appropriately.
+    """
+    base_capex = asset["mw"] * asset["capex_per_kw"] * 1000 / 1e6
+    build_years = asset["deploy_months"] / 12
+    idc = base_capex * 0.5 * discount_rate * build_years
+    return base_capex + idc
+
+
 def run_financial_model(portfolio, params):
-    """Run full financial model for portfolio. Returns yearly cashflows and metrics."""
     years = params["projection_years"]
     discount_rate = params["discount_rate"] / 100
     carbon_price = params["carbon_price"]
@@ -126,26 +149,20 @@ def run_financial_model(portfolio, params):
         params["gas_price"], params["gas_escalation"], years
     )
 
-    total_capex = sum(a["mw"] * a["capex_per_kw"] * 1000 / 1e6 for a in portfolio)
+    # Use effective CAPEX (base + IDC) — penalizes long construction timelines
+    total_capex = sum(calc_effective_capex(a, discount_rate) for a in portfolio)
 
     yearly_data = []
-    cumulative = -total_capex
-
     for y in range(1, years + 1):
-        year_revenue = 0
-        year_costs = 0
         asset_details = []
         for asset in portfolio:
             net = calc_asset_cashflow(asset, y, prices, carbon_price)
-            year_revenue += max(0, net)
-            year_costs += abs(min(0, net))
             asset_details.append({"name": asset["name"], "net": net})
 
         net_cf = sum(d["net"] for d in asset_details)
         if y == 1:
             net_cf -= total_capex
 
-        cumulative += net_cf + (total_capex if y == 1 else 0)  # re-calc properly
         cumulative_actual = sum(
             sum(calc_asset_cashflow(a, yr, prices, carbon_price) for a in portfolio)
             for yr in range(1, y + 1)
@@ -158,20 +175,17 @@ def run_financial_model(portfolio, params):
             "prices": prices[y],
         })
 
-    # NPV
     cashflows = [-total_capex] + [
         sum(calc_asset_cashflow(a, y, prices, carbon_price) for a in portfolio)
         for y in range(1, years + 1)
     ]
     npv = sum(cf / (1 + discount_rate) ** t for t, cf in enumerate(cashflows))
 
-    # IRR
     try:
         irr = brentq(lambda r: sum(cf / (1 + r) ** t for t, cf in enumerate(cashflows)), -0.5, 5.0) * 100
     except (ValueError, RuntimeError):
         irr = None
 
-    # Payback
     cum = 0
     payback = None
     for i, cf in enumerate(cashflows):
@@ -186,16 +200,18 @@ def run_financial_model(portfolio, params):
         "irr": irr,
         "payback": payback,
         "total_capex": total_capex,
+        "base_capex": sum(a["mw"] * a["capex_per_kw"] * 1000 / 1e6 for a in portfolio),
+        "total_idc": sum(calc_effective_capex(a, discount_rate) - a["mw"] * a["capex_per_kw"] * 1000 / 1e6 for a in portfolio),
+        "capex_by_asset": [{"name": a["name"], "base": a["mw"] * a["capex_per_kw"] * 1000 / 1e6,
+                             "idc": calc_effective_capex(a, discount_rate) - a["mw"] * a["capex_per_kw"] * 1000 / 1e6,
+                             "effective": calc_effective_capex(a, discount_rate)} for a in portfolio],
         "cashflows": cashflows,
         "prices": prices,
     }
 
 
 def run_monte_carlo(portfolio, params, n_simulations=1000):
-    """Run Monte Carlo with random energy price variations."""
     results = []
-    base_npv_params = params.copy()
-
     for _ in range(n_simulations):
         mc_params = params.copy()
         mc_params["base_energy_price"] = params["base_energy_price"] * np.random.lognormal(0, 0.15)
