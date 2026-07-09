@@ -536,16 +536,31 @@ with tabs[5]:
 
         st.caption(f"Zone base peak: {current_peak:,} MW | Organic growth: ~{zone_organic} MW/yr | DC growth: ~{zone_dc} MW announced")
 
+        # Portfolio phased deployment based on deploy_months
         years_fwd = projection_years
         load_proj = []
         cap = get_total_mw(st.session_state.portfolio)
+
+        # Build portfolio capacity curve (assets come online at their COD)
+        def get_portfolio_capacity_by_year(portfolio, year):
+            """Portfolio MW available in a given year, accounting for construction time."""
+            available = 0
+            for asset in portfolio:
+                cod_year = asset["deploy_months"] / 12
+                if year >= cod_year:
+                    # Apply degradation after COD
+                    years_operating = year - cod_year
+                    degradation = (1 - asset["degradation_pct_yr"] / 100) ** years_operating
+                    available += asset["mw"] * degradation
+            return available
 
         peak = current_peak
         for y in range(years_fwd):
             growth = zone_organic + zone_dc * (dc_conversion / 100) * (0.1 if y < 3 else 0.05)
             peak += growth
+            portfolio_mw = get_portfolio_capacity_by_year(st.session_state.portfolio, y + 1)
             load_proj.append({"Year": y + 1, "Peak Demand (MW)": peak,
-                              "Portfolio Capacity (MW)": cap})
+                              "Portfolio Capacity (MW)": portfolio_mw})
 
         load_df = pd.DataFrame(load_proj)
         fig_load = go.Figure()
@@ -558,14 +573,15 @@ with tabs[5]:
 
         # Second chart: Portfolio vs NEW demand growth only
         st.subheader("Portfolio vs New Demand Growth")
-        st.caption("Shows only the incremental load added to the zone — not the existing baseline.")
+        st.caption("Shows only the incremental load added to the zone. Portfolio ramps up as assets reach COD and degrades over time.")
         cumulative_growth = []
         cum = 0
         for y in range(years_fwd):
             growth = zone_organic + zone_dc * (dc_conversion / 100) * (0.1 if y < 3 else 0.05)
             cum += growth
+            portfolio_mw = get_portfolio_capacity_by_year(st.session_state.portfolio, y + 1)
             cumulative_growth.append({"Year": y + 1, "Cumulative New Demand (MW)": cum,
-                                       "Portfolio Capacity (MW)": cap})
+                                       "Portfolio Capacity (MW)": portfolio_mw})
 
         growth_df = pd.DataFrame(cumulative_growth)
         fig_growth = go.Figure()
@@ -580,18 +596,20 @@ with tabs[5]:
 
         # When does new demand exceed portfolio?
         crossover_year = next((row["Year"] for _, row in growth_df.iterrows()
-                               if row["Cumulative New Demand (MW)"] > cap), None)
+                               if row["Cumulative New Demand (MW)"] > row["Portfolio Capacity (MW)"]), None)
 
         # Portfolio as % of zone demand
+        final_portfolio_mw = get_portfolio_capacity_by_year(st.session_state.portfolio, years_fwd)
         pct_of_zone = cap / current_peak * 100
-        reserve_margin = (cap - load_proj[0]["Peak Demand (MW)"]) / load_proj[0]["Peak Demand (MW)"] * 100
-        pct_of_new = cap / cumulative_growth[-1]["Cumulative New Demand (MW)"] * 100 if cumulative_growth else 0
+        pct_of_new = final_portfolio_mw / cumulative_growth[-1]["Cumulative New Demand (MW)"] * 100 if cumulative_growth else 0
+        full_capacity_year = next((y + 1 for y in range(years_fwd)
+                                   if get_portfolio_capacity_by_year(st.session_state.portfolio, y + 1) >= cap * 0.99), 1)
 
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Portfolio as % of Zone Peak", f"{pct_of_zone:.1f}%")
+        c1.metric("Full Portfolio Online", f"Year {full_capacity_year}")
         c2.metric("Portfolio vs 20yr New Demand", f"{pct_of_new:.0f}%")
         c3.metric("Demand Exceeds Portfolio", f"Year {crossover_year}" if crossover_year else "Never (within horizon)")
-        c4.metric(f"Zone Peak ({demand_zone})", f"{current_peak:,} MW")
+        c4.metric("Peak Capacity (at full build)", f"{cap:,.0f} MW")
 
 # ============================================================
 # TAB 7: FREQUENCY & RELIABILITY
