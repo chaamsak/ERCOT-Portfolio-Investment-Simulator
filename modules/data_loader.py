@@ -1,16 +1,10 @@
-# Data loader querying Grid Status ERCOT data from Snowflake marketplace share
-
+# Data loader reading ERCOT market data from CSV files exported from Snowflake
+# Co-authored with CoCo
 import pandas as pd
 import numpy as np
 import os
-import streamlit as st
 
-try:
-    import snowflake.connector
-    HAS_SNOWFLAKE = True
-except ImportError:
-    HAS_SNOWFLAKE = False
-
+DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
 ERCOT_ZONES = [
     "LZ_SOUTH (LCRA)",
@@ -28,69 +22,38 @@ def _zone_label_to_id(label):
     return label.split(" (")[0]
 
 
-def _get_snowflake_conn():
-    """Create Snowflake connection from Streamlit secrets."""
-    return snowflake.connector.connect(
-        account=st.secrets["SNOWFLAKE_ACCOUNT"],
-        user=st.secrets["SNOWFLAKE_USER"],
-        password=st.secrets["SNOWFLAKE_PASSWORD"],
-        warehouse=st.secrets.get("SNOWFLAKE_WAREHOUSE", "GENTEST"),
-        database="GRID_STATUS__ERCOT_DATASETS",
-        schema="SHARE",
-    )
-
-
 def get_ercot_lmp(days=90, zones=None):
     if zones is None:
         zones = ["LZ_SOUTH"]
     zone_ids = [_zone_label_to_id(z) for z in zones]
 
-    if HAS_SNOWFLAKE:
+    csv_path = os.path.join(DATA_DIR, "ercot_lmp.csv")
+    if os.path.exists(csv_path):
         try:
-            conn = _get_snowflake_conn()
-            placeholders = ",".join([f"'{z}'" for z in zone_ids])
-            query = f"""
-                SELECT
-                    INTERVAL_START_LOCAL AS timestamp,
-                    LMP AS lmp,
-                    LOCATION AS zone
-                FROM ERCOT_LMP_BY_SETTLEMENT_POINT
-                WHERE INTERVAL_START_LOCAL >= DATEADD(day, -{days}, CURRENT_TIMESTAMP())
-                AND LOCATION IN ({placeholders})
-                AND LOCATION_TYPE = 'Trading Hub'
-                ORDER BY INTERVAL_START_LOCAL
-            """
-            df = pd.read_sql(query, conn)
-            conn.close()
-            df.columns = [c.lower() for c in df.columns]
-            df["_source"] = "live (Snowflake - Grid Status)"
+            df = pd.read_csv(csv_path, parse_dates=["timestamp"])
+            df = df[df["zone"].isin(zone_ids)]
+            if days:
+                cutoff = pd.Timestamp.now() - pd.Timedelta(days=days)
+                df = df[df["timestamp"] >= cutoff]
+            df["_source"] = "live (CSV export from Snowflake)"
             return df
         except Exception as e:
-            source = f"synthetic (Snowflake error: {type(e).__name__}: {e})"
-    else:
-        source = "synthetic (snowflake-connector not installed)"
+            pass
 
     df = _generate_synthetic(days, zone_ids)
-    df["_source"] = source
+    df["_source"] = "synthetic (no CSV found in data/ folder)"
     return df
 
 
 def get_ercot_load(days=365):
-    if HAS_SNOWFLAKE:
+    csv_path = os.path.join(DATA_DIR, "ercot_load.csv")
+    if os.path.exists(csv_path):
         try:
-            conn = _get_snowflake_conn()
-            query = f"""
-                SELECT
-                    INTERVAL_START_LOCAL AS timestamp,
-                    LOAD AS load_mw
-                FROM ERCOT_LOAD
-                WHERE INTERVAL_START_LOCAL >= DATEADD(day, -{days}, CURRENT_TIMESTAMP())
-                ORDER BY INTERVAL_START_LOCAL
-            """
-            df = pd.read_sql(query, conn)
-            conn.close()
-            df.columns = [c.lower() for c in df.columns]
-            df["_source"] = "live (Snowflake - Grid Status)"
+            df = pd.read_csv(csv_path, parse_dates=["timestamp"])
+            if days:
+                cutoff = pd.Timestamp.now() - pd.Timedelta(days=days)
+                df = df[df["timestamp"] >= cutoff]
+            df["_source"] = "live (CSV export from Snowflake)"
             return df
         except Exception:
             pass
@@ -100,55 +63,29 @@ def get_ercot_load(days=365):
 
 
 def get_ercot_as_prices(days=90):
-    if HAS_SNOWFLAKE:
+    csv_path = os.path.join(DATA_DIR, "ercot_as_prices.csv")
+    if os.path.exists(csv_path):
         try:
-            conn = _get_snowflake_conn()
-            query = f"""
-                SELECT
-                    INTERVAL_START_LOCAL AS timestamp,
-                    AS_TYPE,
-                    MCPC AS price
-                FROM ERCOT_MCPC_DAM
-                WHERE INTERVAL_START_LOCAL >= DATEADD(day, -{days}, CURRENT_TIMESTAMP())
-                ORDER BY INTERVAL_START_LOCAL
-            """
-            df = pd.read_sql(query, conn)
-            conn.close()
-            df.columns = [c.lower() for c in df.columns]
-            # Pivot AS types into columns
-            if "as_type" in df.columns:
-                pivot = df.pivot_table(index="timestamp", columns="as_type", values="price").reset_index()
-                pivot.columns = [c.lower().replace(" ", "_") for c in pivot.columns]
-                pivot["_source"] = "live (Snowflake - Grid Status)"
-                return pivot
+            df = pd.read_csv(csv_path, parse_dates=["timestamp"])
+            if days:
+                cutoff = pd.Timestamp.now() - pd.Timedelta(days=days)
+                df = df[df["timestamp"] >= cutoff]
+            df["_source"] = "live (CSV export from Snowflake)"
+            return df
         except Exception:
             pass
     return _generate_synthetic_as_prices(days)
 
 
 def get_ercot_fuel_mix(days=90):
-    if HAS_SNOWFLAKE:
+    csv_path = os.path.join(DATA_DIR, "ercot_fuel_mix.csv")
+    if os.path.exists(csv_path):
         try:
-            conn = _get_snowflake_conn()
-            query = f"""
-                SELECT
-                    INTERVAL_START_LOCAL AS timestamp,
-                    NATURAL_GAS AS gas,
-                    WIND,
-                    SOLAR,
-                    NUCLEAR,
-                    COAL_AND_LIGNITE AS coal,
-                    HYDRO,
-                    OTHER,
-                    POWER_STORAGE AS storage
-                FROM ERCOT_FUEL_MIX
-                WHERE INTERVAL_START_LOCAL >= DATEADD(day, -{days}, CURRENT_TIMESTAMP())
-                ORDER BY INTERVAL_START_LOCAL
-            """
-            df = pd.read_sql(query, conn)
-            conn.close()
-            df.columns = [c.lower() for c in df.columns]
-            df["_source"] = "live (Snowflake - Grid Status)"
+            df = pd.read_csv(csv_path, parse_dates=["timestamp"])
+            if days:
+                cutoff = pd.Timestamp.now() - pd.Timedelta(days=days)
+                df = df[df["timestamp"] >= cutoff]
+            df["_source"] = "live (CSV export from Snowflake)"
             return df
         except Exception:
             pass
@@ -221,9 +158,8 @@ def _generate_synthetic_fuel_mix(days):
         "coal": 3000 + np.random.normal(0, 500, hours),
         "hydro": 500 + np.random.normal(0, 100, hours),
         "other": 1000 + np.random.normal(0, 200, hours),
-        "storage": 500 + np.random.normal(0, 300, hours),
     })
-    for col in ["gas", "wind", "solar", "coal", "hydro", "other", "storage"]:
+    for col in ["gas", "wind", "solar", "coal", "hydro", "other"]:
         df[col] = np.maximum(df[col], 0)
     df["_source"] = "synthetic"
     return df
