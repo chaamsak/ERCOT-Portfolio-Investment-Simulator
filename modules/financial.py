@@ -13,10 +13,8 @@ def build_energy_prices(base_price, escalation, peak_ratio, volatility, gas_pric
         spread = peak - offpeak
         spike_premium = avg * volatility * 0.3
         gas = gas_price * (1 + gas_escalation / 100) ** y
-        # Nuclear fuel: ~$8/MWh, very stable (uranium price + enrichment + disposal)
-        nuclear = 8.0 * (1.01) ** y
-        # Coal: ~$2.50/MMBtu, modest escalation
-        coal = 2.50 * (1.02) ** y
+        nuclear = 8.0 * (1.01) ** y   # $/MWh uranium+enrichment+disposal, very stable
+        coal = 2.50 * (1.02) ** y      # $/MMBtu
         prices[y] = {
             "avg": avg, "peak": peak, "offpeak": offpeak,
             "spread": spread, "spike_premium": spike_premium,
@@ -26,9 +24,22 @@ def build_energy_prices(base_price, escalation, peak_ratio, volatility, gas_pric
 
 
 def calc_asset_cashflow(asset, year, prices, carbon_price=0):
+    """
+    Returns net cashflow for one asset in one year.
+    Returns 0 if the asset hasn't reached COD yet (still under construction).
+    deploy_months defines when the asset starts earning. This correctly models
+    the revenue delay without needing IDC: the cost of capital during
+    construction is reflected in the NPV discount applied to delayed cashflows.
+    """
+    cod_year = asset["deploy_months"] / 12
+    if year < cod_year:
+        return 0  # still under construction, no revenue and no O&M
+
+    # Years operating since COD (for degradation)
+    years_operating = year - cod_year
     mw = asset["mw"]
     cf = asset["capacity_factor"]
-    degradation = (1 - asset["degradation_pct_yr"] / 100) ** year
+    degradation = (1 - asset["degradation_pct_yr"] / 100) ** years_operating
     fixed_om = mw * asset["fixed_om_per_kw_yr"] * 1000 / 1e6
     yr_prices = prices[year]
     mode = asset["revenue_mode"]
@@ -43,7 +54,7 @@ def calc_asset_cashflow(asset, year, prices, carbon_price=0):
             as_rev = mw * (asset["as_participation_pct"] / 100) * 15 * 8760 / 1e6
             revenue = (arbitrage + spike_rev + as_rev) * degradation
         augmentation = 0
-        if asset["augmentation_year"] > 0 and year == asset["augmentation_year"]:
+        if asset["augmentation_year"] > 0 and int(years_operating) == asset["augmentation_year"]:
             augmentation = mw * asset["duration_hrs"] * 1000 * asset["augmentation_cost_kwh"] / 1e6
         net = revenue - fixed_om - augmentation
 
@@ -73,26 +84,22 @@ def calc_asset_cashflow(asset, year, prices, carbon_price=0):
         var_om_cost = generation * asset["var_om"] / 1e6
         carbon_cost = generation * asset["co2_per_mwh"] * carbon_price / 1e6
 
-        # Fuel cost depends on fuel type
         fuel_type = asset.get("fuel_type", "gas")
         if fuel_type == "nuclear":
-            # Nuclear fuel cost in $/MWh (already per MWh, not per MMBtu)
             fuel_cost = generation * yr_prices["nuclear"] / 1e6
         elif fuel_type == "coal":
-            # Coal: heat_rate (BTU/kWh) × coal price ($/MMBtu) → $/MWh
             fuel_cost = generation * heat_rate * yr_prices["coal"] / 1e6 / 1e6 * 1e6
         else:
-            # Gas: heat_rate (BTU/kWh) × gas price ($/MMBtu)
             fuel_cost = generation * heat_rate * yr_prices["gas"] / 1e6 / 1e6 * 1e6
 
         if mode == "physical_ppa":
             ppa_pct = asset["ppa_pct_contracted"] / 100
             curtail = asset["ppa_curtailment_allowance"] / 100
-            ppa_rev = generation * ppa_pct * (1 - curtail) * asset["ppa_price"] * (1 + asset["ppa_escalation"] / 100) ** (year - 1) / 1e6
+            ppa_rev = generation * ppa_pct * (1 - curtail) * asset["ppa_price"] * (1 + asset["ppa_escalation"] / 100) ** (years_operating) / 1e6
             merch_rev = generation * (1 - ppa_pct) * yr_prices["avg"] / 1e6
             revenue = ppa_rev + merch_rev
         elif mode == "vppa":
-            revenue = generation * asset["ppa_price"] * (1 + asset["ppa_escalation"] / 100) ** (year - 1) / 1e6
+            revenue = generation * asset["ppa_price"] * (1 + asset["ppa_escalation"] / 100) ** (years_operating) / 1e6
             revenue -= generation * 2.0 * 0.5 / 1e6
         else:
             revenue = generation * yr_prices["avg"] / 1e6
@@ -103,11 +110,11 @@ def calc_asset_cashflow(asset, year, prices, carbon_price=0):
         generation = mw * cf * 8760 * degradation
         if mode == "physical_ppa":
             ppa_pct = asset["ppa_pct_contracted"] / 100
-            ppa_rev = generation * ppa_pct * asset["ppa_price"] * (1 + asset["ppa_escalation"] / 100) ** (year - 1) / 1e6
+            ppa_rev = generation * ppa_pct * asset["ppa_price"] * (1 + asset["ppa_escalation"] / 100) ** (years_operating) / 1e6
             merch_rev = generation * (1 - ppa_pct) * yr_prices["avg"] * 0.85 / 1e6
             revenue = ppa_rev + merch_rev
         elif mode == "vppa":
-            revenue = generation * asset["ppa_price"] * (1 + asset["ppa_escalation"] / 100) ** (year - 1) / 1e6
+            revenue = generation * asset["ppa_price"] * (1 + asset["ppa_escalation"] / 100) ** (years_operating) / 1e6
             revenue -= generation * 2.0 * 0.3 / 1e6
         else:
             revenue = generation * yr_prices["avg"] * 0.85 / 1e6
@@ -125,19 +132,6 @@ def calc_asset_cashflow(asset, year, prices, carbon_price=0):
     return net
 
 
-def calc_effective_capex(asset, discount_rate):
-    """
-    Adds Interest During Construction (IDC) to CAPEX.
-    During construction, capital is drawn linearly. Average drawn = CAPEX/2.
-    IDC = CAPEX/2 × WACC × construction_years
-    This penalizes long-build assets (nuclear, PSH) appropriately.
-    """
-    base_capex = asset["mw"] * asset["capex_per_kw"] * 1000 / 1e6
-    build_years = asset["deploy_months"] / 12
-    idc = base_capex * 0.5 * discount_rate * build_years
-    return base_capex + idc
-
-
 def run_financial_model(portfolio, params):
     years = params["projection_years"]
     discount_rate = params["discount_rate"] / 100
@@ -149,32 +143,32 @@ def run_financial_model(portfolio, params):
         params["gas_price"], params["gas_escalation"], years
     )
 
-    # Use effective CAPEX (base + IDC) — penalizes long construction timelines
-    total_capex = sum(calc_effective_capex(a, discount_rate) for a in portfolio)
+    # Base CAPEX — no IDC added here. Construction delay is modeled via
+    # zero revenue until deploy_months. The NPV discount naturally captures
+    # the cost of capital during construction through delayed cashflows.
+    base_capex = sum(a["mw"] * a["capex_per_kw"] * 1000 / 1e6 for a in portfolio)
+    total_capex = base_capex
 
     yearly_data = []
+    cumulative = -total_capex  # running total (efficient, avoids O(n²))
+
     for y in range(1, years + 1):
         asset_details = []
         for asset in portfolio:
             net = calc_asset_cashflow(asset, y, prices, carbon_price)
             asset_details.append({"name": asset["name"], "net": net})
 
-        net_cf = sum(d["net"] for d in asset_details)
-        if y == 1:
-            net_cf -= total_capex
-
-        cumulative_actual = sum(
-            sum(calc_asset_cashflow(a, yr, prices, carbon_price) for a in portfolio)
-            for yr in range(1, y + 1)
-        ) - total_capex
+        year_net = sum(d["net"] for d in asset_details)
+        cumulative += year_net
 
         yearly_data.append({
-            "year": y, "net_cashflow": net_cf,
-            "cumulative": cumulative_actual,
+            "year": y, "net_cashflow": year_net,
+            "cumulative": cumulative,
             "asset_details": asset_details,
             "prices": prices[y],
         })
 
+    # Cashflow series for NPV/IRR: year 0 = -CAPEX, then annual net
     cashflows = [-total_capex] + [
         sum(calc_asset_cashflow(a, y, prices, carbon_price) for a in portfolio)
         for y in range(1, years + 1)
@@ -194,17 +188,22 @@ def run_financial_model(portfolio, params):
             payback = i
             break
 
+    capex_by_asset = [
+        {"name": a["name"],
+         "base": a["mw"] * a["capex_per_kw"] * 1000 / 1e6,
+         "deploy_months": a["deploy_months"]}
+        for a in portfolio
+    ]
+
     return {
         "yearly_data": yearly_data,
         "npv": npv,
         "irr": irr,
         "payback": payback,
         "total_capex": total_capex,
-        "base_capex": sum(a["mw"] * a["capex_per_kw"] * 1000 / 1e6 for a in portfolio),
-        "total_idc": sum(calc_effective_capex(a, discount_rate) - a["mw"] * a["capex_per_kw"] * 1000 / 1e6 for a in portfolio),
-        "capex_by_asset": [{"name": a["name"], "base": a["mw"] * a["capex_per_kw"] * 1000 / 1e6,
-                             "idc": calc_effective_capex(a, discount_rate) - a["mw"] * a["capex_per_kw"] * 1000 / 1e6,
-                             "effective": calc_effective_capex(a, discount_rate)} for a in portfolio],
+        "base_capex": base_capex,
+        "total_idc": 0,  # no longer used — delay modeled via zero revenue
+        "capex_by_asset": capex_by_asset,
         "cashflows": cashflows,
         "prices": prices,
     }
