@@ -63,7 +63,7 @@ with st.sidebar.expander("Gas Market"):
 with st.sidebar.expander("Financial"):
     discount_rate = st.slider("Discount Rate / WACC (%)", 6.0, 14.0, 8.0)
     carbon_price = st.slider("Carbon Price ($/ton CO2)", 0.0, 75.0, 0.0)
-    projection_years = st.slider("Projection Years", 5, 30, 20)
+    projection_years = st.slider("Projection Years", 5, 40, 30)
     inflation_rate = st.slider("Inflation Rate (%)", 0.0, 5.0, 2.5)
 
 with st.sidebar.expander("Load Growth"):
