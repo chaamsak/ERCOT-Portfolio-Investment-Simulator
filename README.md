@@ -226,6 +226,83 @@ A structured way to say: "Under these 6 futures, across these 9 dimensions, Port
 
 ---
 
+## Glossary
+
+| Term | Full Name | Plain English |
+|------|-----------|---------------|
+| **NPV** | Net Present Value | Total value a project creates in today's dollars. Positive = makes money. Negative = loses money. Accounts for the time value of money (a dollar today > a dollar in 10 years). |
+| **IRR** | Internal Rate of Return | The annual return percentage the project earns. If IRR > your cost of capital (WACC), the project is worth doing. |
+| **WACC** | Weighted Average Cost of Capital | How much it costs you to fund the project (mix of debt interest + equity return expectations). Used as the discount rate for NPV. |
+| **CAPEX** | Capital Expenditure | Upfront cost to build the asset (construction, equipment, interconnection). Spent before the asset earns revenue. |
+| **OPEX** | Operating Expenditure | Ongoing annual costs (maintenance, fuel, labor). Spent every year the asset operates. |
+| **PPA** | Power Purchase Agreement | A contract where a buyer agrees to purchase electricity from a generator at a fixed price for a set number of years. Reduces revenue uncertainty for the seller. |
+| **VPPA** | Virtual Power Purchase Agreement | A financial-only PPA. No physical electricity delivered. Buyer and seller settle the price difference in cash. Used when buyer and generator are in different locations. |
+| **MTM** | Mark-to-Market | Current value of a PPA contract. If your PPA price is above today's market price, the contract is "in the money" (positive MTM). |
+| **LMP** | Locational Marginal Price | The wholesale price of electricity at a specific point on the grid at a specific time. What generators get paid. |
+| **ERCOT** | Electric Reliability Council of Texas | The organization that operates the Texas power grid and wholesale market. |
+| **MW** | Megawatt | A unit of power capacity. 1 MW powers ~200-1000 homes depending on time of day. |
+| **MWh** | Megawatt-hour | A unit of energy. 1 MW running for 1 hour = 1 MWh. What you actually sell. |
+| **CF** | Capacity Factor | % of time an asset actually generates at full power. Solar ~26%, CC ~85%, BESS ~85%. |
+| **BESS** | Battery Energy Storage System | Grid-scale batteries. Earn revenue from arbitrage (buy low, sell high) and grid services. |
+| **CC** | Combined Cycle | Gas turbine + steam turbine power plant. High efficiency, runs most of the time (baseload). |
+| **RICE** | Reciprocating Internal Combustion Engine | Fast-start gas engines used for peaking. Start in seconds, run during high-price hours. |
+| **AS** | Ancillary Services | Grid stability products (frequency regulation, reserves). Generators get paid to be available, even if not dispatching energy. |
+| **FFR** | Fast Frequency Response | Sub-second response to frequency deviations. Batteries excel here. Highest-paid AS product. |
+| **RRS** | Responsive Reserve Service | Must respond within 10 minutes to arrest frequency decline. |
+| **ECRS** | ERCOT Contingency Reserve Service | 10-minute reserve to cover generator trips. Newer ERCOT product. |
+| **RegUp/RegDn** | Regulation Up / Regulation Down | Second-by-second frequency balancing. Generators follow AGC signals up or down. |
+| **NonSpin** | Non-Spinning Reserve | Offline capacity that can start within 30 minutes. Cheapest AS product. |
+| **RoCoF** | Rate of Change of Frequency | How fast grid frequency drops after a generator trips (Hz/s). Lower = safer. |
+| **UFLS** | Under-Frequency Load Shedding | Emergency automatic disconnection of customers when frequency drops below 59.3 Hz. Last resort. |
+| **Inertia** | Rotational Inertia | Spinning mass in generators that naturally resists frequency changes. Batteries don't have it but can mimic it (synthetic inertia). |
+| **SB6** | Senate Bill 6 (Texas) | 2023 Texas law requiring dispatchable generation investment to maintain grid reliability. |
+| **COD** | Commercial Operation Date | The day an asset starts generating revenue. |
+| **DCF** | Discounted Cash Flow | Method of valuing a project by discounting all future cash to present value. NPV is a DCF calculation. |
+| **Monte Carlo** | Monte Carlo Simulation | Running the financial model 1000+ times with random price variations to see the range of possible outcomes (P10/P50/P90). |
+| **P10/P50/P90** | Probability Percentiles | P10 = 90% chance outcome is better. P50 = median (50/50). P90 = only 10% chance it's this good. Used to express risk. |
+| **Basis Risk** | Locational Price Difference | The risk that prices differ between where you generate and where your contract settles. Costs money on VPPAs. |
+| **DR** | Demand Response | Reducing load on command instead of adding generation. Gets paid like a generator. |
+| **FOR** | Forced Outage Rate | % of time an asset is unexpectedly broken/offline. Higher = less reliable. |
+
+---
+
+## How PPA Works in This App
+
+The app does **NOT** restrict you to PPAs. Each asset has 5 revenue modes you can choose independently:
+
+| Mode | What happens to revenue |
+|------|------------------------|
+| **Merchant** | 100% exposed to market prices. High upside potential, high risk. Revenue = generation × spot price. |
+| **Physical PPA** | You contract X% of output at a fixed $/MWh for Y years. That portion is predictable. The rest (if any) goes to market. |
+| **VPPA** | Financial swap. You get paid your strike price regardless of where you physically deliver. But you eat basis risk (price difference between nodes). |
+| **Tolling** | Buyer pays you a fixed $/kW-month for the right to dispatch your asset. You get guaranteed revenue regardless of whether they use it or not. Common for BESS and peakers. |
+| **Hybrid** | Part PPA (e.g., 60% at $55/MWh) + part merchant (40% at spot). Balances certainty and upside. |
+
+### You can MIX modes across assets:
+
+```
+Portfolio example:
+- Solar 400 MW → Physical PPA at $32/MWh × 15yr (low risk, predictable)
+- BESS 400 MW → Tolling at $8/kW-mo (guaranteed monthly payment)
+- CC 700 MW → Hybrid: 80% PPA at $55 + 20% merchant (mostly stable)
+- Peaker 300 MW → Merchant (only runs during high prices anyway)
+- Wind 200 MW → VPPA at $28/MWh (financial contract, no physical delivery)
+```
+
+### What the app shows you:
+
+1. **Contracted %** — What fraction of total portfolio revenue is under contract (higher = more certain)
+2. **PPA vs Merchant comparison** — Same portfolio, three scenarios: all merchant / current mix / fully contracted. Shows the NPV trade-off.
+3. **Mark-to-Market** — Are your existing PPAs above or below current market? (In the money or underwater?)
+4. **Revenue Certainty Score** — Scores 0-10 based on contracted %. Penalizes concentration risk (too much revenue from one buyer).
+5. **Optimization** — Suggests the optimal % to contract per asset given your volatility tolerance.
+
+### The key insight the app makes obvious:
+
+> PPAs reduce your NPV slightly (you give up price upside) but **dramatically reduce downside risk**. The Scenario tab proves this: under "D: Low Energy" ($25/MWh), fully-merchant portfolios get crushed while contracted ones barely move. The question isn't "PPA yes or no" — it's "how much certainty do you want to pay for?"
+
+---
+
 ## License
 
 Internal tool — not for redistribution.
