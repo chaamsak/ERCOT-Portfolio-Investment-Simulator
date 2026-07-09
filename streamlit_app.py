@@ -697,7 +697,8 @@ with tabs[8]:
         st.warning("Add assets to your portfolio first.")
     else:
         risk_tabs = st.tabs(["Thermal Derating", "Gas Supply", "Emissions",
-                              "Supply Chain", "Reliability", "Degradation"])
+                              "Supply Chain", "Reliability", "Degradation",
+                              "Seasonal & Extreme Events"])
 
         with risk_tabs[0]:
             peak_temp = st.slider("Peak Temperature (F)", 90, 120, 105)
@@ -758,6 +759,96 @@ with tabs[8]:
                         st.plotly_chart(fig_deg, use_container_width=True)
             else:
                 st.info("No storage assets in portfolio.")
+
+        with risk_tabs[6]:
+            st.subheader("Seasonal Peak Analysis")
+
+            # Zone peak demand by season (LCRA-calibrated)
+            zone_peaks_seasonal = {
+                "LZ_SOUTH (LCRA)": {"Summer (Jul-Aug)": 13200, "Winter (Jan-Feb)": 9800,
+                                     "Spring (Mar-May)": 7500, "Fall (Sep-Nov)": 8800},
+                "LZ_HOUSTON":      {"Summer (Jul-Aug)": 26000, "Winter (Jan-Feb)": 19000,
+                                     "Spring (Mar-May)": 15000, "Fall (Sep-Nov)": 18000},
+                "LZ_NORTH":        {"Summer (Jul-Aug)": 23000, "Winter (Jan-Feb)": 17000,
+                                     "Spring (Mar-May)": 13000, "Fall (Sep-Nov)": 16000},
+                "LZ_WEST":         {"Summer (Jul-Aug)": 9000,  "Winter (Jan-Feb)": 6500,
+                                     "Spring (Mar-May)": 5000, "Fall (Sep-Nov)": 6000},
+                "All ERCOT":       {"Summer (Jul-Aug)": 83000, "Winter (Jan-Feb)": 67000,
+                                     "Spring (Mar-May)": 52000, "Fall (Sep-Nov)": 61000},
+            }
+
+            seasonal_zone = st.selectbox("Zone", list(zone_peaks_seasonal.keys()), key="seasonal_zone")
+            peaks = zone_peaks_seasonal[seasonal_zone]
+            cap = get_total_mw(st.session_state.portfolio)
+
+            seasonal_df = pd.DataFrame([
+                {"Season": s, "Peak Demand (MW)": p, "Portfolio Capacity (MW)": cap,
+                 "Gap (MW)": max(0, p - cap), "Coverage (%)": min(100, cap / p * 100)}
+                for s, p in peaks.items()
+            ])
+
+            fig_season = go.Figure()
+            fig_season.add_trace(go.Bar(name="Peak Demand", x=seasonal_df["Season"],
+                                         y=seasonal_df["Peak Demand (MW)"], marker_color="red",
+                                         opacity=0.7))
+            fig_season.add_trace(go.Bar(name="Portfolio Capacity", x=seasonal_df["Season"],
+                                         y=seasonal_df["Portfolio Capacity (MW)"], marker_color="green",
+                                         opacity=0.9))
+            fig_season.update_layout(title=f"Seasonal Peak Demand vs Portfolio — {seasonal_zone}",
+                                      barmode="group", yaxis_title="MW")
+            st.plotly_chart(fig_season, use_container_width=True)
+            st.dataframe(seasonal_df, use_container_width=True)
+
+            st.divider()
+            st.subheader("Extreme Weather Stress Tests")
+
+            col_a, col_b = st.columns(2)
+
+            with col_a:
+                st.markdown("**Summer Heat Wave (Uri-Heat equivalent)**")
+                heat_wave_demand = st.number_input("Extreme Summer Peak (MW)", value=peaks["Summer (Jul-Aug)"] * 1.15,
+                                                    key="hw_demand",
+                                                    help="Uri-like summer event: ~15% above normal summer peak")
+                heat_wave_temp = st.slider("Temperature during event (F)", 100, 120, 112, key="hw_temp")
+                derating_hw = calc_thermal_derating(st.session_state.portfolio, heat_wave_temp)
+                available_in_heat = sum(d["available_mw"] for d in derating_hw)
+                gap_heat = heat_wave_demand - available_in_heat
+                st.metric("Available MW (derated)", f"{available_in_heat:,.0f} MW",
+                          delta=f"{available_in_heat - cap:,.0f} MW from derating")
+                st.metric("Capacity Gap", f"{gap_heat:,.0f} MW",
+                          delta="Shortfall" if gap_heat > 0 else "Portfolio handles it",
+                          delta_color="inverse")
+
+            with col_b:
+                st.markdown("**Winter Storm Uri Scenario**")
+                winter_peak_demand = st.number_input("Extreme Winter Peak (MW)", value=peaks["Winter (Jan-Feb)"] * 1.25,
+                                                      key="uri_demand",
+                                                      help="Uri-like winter event: ~25% above normal winter peak")
+                gas_curtail = st.slider("Gas Curtailment (days)", 1, 14, 7, key="uri_curtail")
+                gas_risk_uri = calc_gas_supply_risk(st.session_state.portfolio, gas_curtail, gas_fraction_at_risk=0.6)
+                total_gas_rev_risk = sum(r["revenue_at_risk_M"] for r in gas_risk_uri) if gas_risk_uri else 0
+                # Gas assets derated in winter (frozen equipment)
+                gas_mw = sum(a["mw"] for a in st.session_state.portfolio if a["heat_rate"] > 0)
+                available_in_winter = cap - gas_mw * 0.40  # 40% of gas derated (Uri scenario)
+                gap_winter = winter_peak_demand - available_in_winter
+                st.metric("Available MW (gas 40% frozen)", f"{available_in_winter:,.0f} MW")
+                st.metric("Capacity Gap", f"{gap_winter:,.0f} MW",
+                          delta="Shortfall" if gap_winter > 0 else "Portfolio handles it",
+                          delta_color="inverse")
+                st.metric("Revenue at Risk (gas curtailment)", f"${total_gas_rev_risk:.1f}M")
+
+            st.divider()
+            st.subheader("4CP (Four Coincident Peak) Value")
+            st.caption("ERCOT's 4 highest peak hours each summer determine transmission charges. Assets available during 4CP earn disproportionate value.")
+            total_firm = sum(a["mw"] for a in st.session_state.portfolio
+                             if a["type"] in ("storage", "peaker", "baseload"))
+            total_cap = get_total_mw(st.session_state.portfolio)
+            four_cp_score = total_firm / total_cap * 100 if total_cap > 0 else 0
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Firm MW (4CP eligible)", f"{total_firm:,.0f} MW")
+            c2.metric("4CP Availability %", f"{four_cp_score:.0f}%")
+            c3.metric("Non-firm MW", f"{total_cap - total_firm:,.0f} MW",
+                      help="Solar/Wind/Flex not guaranteed during 4CP hours")
 
 # ============================================================
 # TAB 10: SCENARIO PLAYGROUND
