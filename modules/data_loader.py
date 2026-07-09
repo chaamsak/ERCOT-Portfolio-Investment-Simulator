@@ -38,10 +38,12 @@ def get_ercot_lmp(days=90, zones=None):
             df["_source"] = "live (CSV export from Snowflake)"
             return df
         except Exception as e:
-            pass
+            source = f"synthetic (CSV read error: {e})"
+    else:
+        source = f"synthetic (CSV not found at: {os.path.abspath(csv_path)})"
 
     df = _generate_synthetic(days, zone_ids)
-    df["_source"] = "synthetic (no CSV found in data/ folder)"
+    df["_source"] = source
     return df
 
 
