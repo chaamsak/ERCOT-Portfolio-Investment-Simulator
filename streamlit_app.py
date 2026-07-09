@@ -308,10 +308,17 @@ with tabs[2]:
 
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total MW", f"{get_total_mw(st.session_state.portfolio):,.0f}")
-        c2.metric("Total CAPEX", f"${result['total_capex']:,.0f}M")
+        c2.metric("Base CAPEX", f"${result['base_capex']:,.0f}M")
         c3.metric("NPV", f"${result['npv']:,.0f}M")
         c4.metric("IRR", f"{result['irr']:.1f}%" if result['irr'] else "N/A")
         c5.metric("Payback", f"Year {result['payback']}" if result['payback'] else "N/A")
+
+        # IDC row — only show if meaningful
+        if result.get("total_idc", 0) > 1:
+            idc = result["total_idc"]
+            effective = result["total_capex"]
+            st.info(f"Interest During Construction (IDC): **${idc:,.0f}M** added to base CAPEX "
+                    f"(long build times at {discount_rate:.1f}% WACC) → Effective CAPEX: **${effective:,.0f}M**")
 
         c6, c7, c8 = st.columns(3)
         c6.metric("Contracted %", f"{ppa_m['contracted_pct']:.0f}%")
@@ -322,10 +329,17 @@ with tabs[2]:
 
         col1, col2 = st.columns(2)
         with col1:
-            capex_data = [{"Asset": a["name"], "CAPEX_M": a["mw"] * a["capex_per_kw"] * 1000 / 1e6}
-                          for a in st.session_state.portfolio]
-            fig_capex = px.pie(pd.DataFrame(capex_data), values="CAPEX_M", names="Asset",
-                               title="CAPEX Breakdown")
+            # Show effective CAPEX (base + IDC) per asset
+            capex_data = [{"Asset": c["name"],
+                           "Base CAPEX ($M)": round(c["base"], 1),
+                           "IDC ($M)": round(c["idc"], 1),
+                           "Effective ($M)": round(c["effective"], 1)}
+                          for c in result["capex_by_asset"]]
+            fig_capex = px.bar(pd.DataFrame(capex_data), x="Asset",
+                               y=["Base CAPEX ($M)", "IDC ($M)"],
+                               barmode="stack",
+                               title="Effective CAPEX by Asset (Base + IDC)",
+                               color_discrete_map={"Base CAPEX ($M)": "#1f77b4", "IDC ($M)": "#ff7f0e"})
             st.plotly_chart(fig_capex, use_container_width=True)
 
         with col2:
