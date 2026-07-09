@@ -184,34 +184,6 @@ Opens at http://localhost:8501
 
 ---
 
-## Refreshing Market Data
-
-To update the CSV data, run these queries in Snowflake against the Grid Status marketplace share and re-upload:
-
-```sql
--- LMP (save as data/ercot_lmp.csv)
-SELECT INTERVAL_START_LOCAL AS timestamp, LMP AS lmp, LOCATION AS zone
-FROM GRID_STATUS__ERCOT_DATASETS.SHARE.ERCOT_LMP_BY_SETTLEMENT_POINT
-WHERE INTERVAL_START_LOCAL >= DATEADD(day, -90, CURRENT_TIMESTAMP())
-AND LOCATION IN ('LZ_SOUTH', 'LZ_WEST', 'LZ_NORTH', 'LZ_HOUSTON')
-ORDER BY INTERVAL_START_LOCAL;
-
--- Load (save as data/ercot_load.csv)
-SELECT INTERVAL_START_LOCAL AS timestamp, LOAD AS load_mw
-FROM GRID_STATUS__ERCOT_DATASETS.SHARE.ERCOT_LOAD
-WHERE INTERVAL_START_LOCAL >= DATEADD(day, -365, CURRENT_TIMESTAMP())
-ORDER BY INTERVAL_START_LOCAL;
-
--- Fuel Mix (save as data/ercot_fuel_mix.csv)
-SELECT INTERVAL_START_LOCAL AS timestamp, NATURAL_GAS AS gas, WIND AS wind,
-       SOLAR AS solar, NUCLEAR AS nuclear, COAL_AND_LIGNITE AS coal,
-       HYDRO AS hydro, OTHER AS other
-FROM GRID_STATUS__ERCOT_DATASETS.SHARE.ERCOT_FUEL_MIX
-WHERE INTERVAL_START_LOCAL >= DATEADD(day, -90, CURRENT_TIMESTAMP())
-ORDER BY INTERVAL_START_LOCAL;
-```
-
----
 
 ## What This Tool Is Not
 
@@ -268,7 +240,7 @@ A structured way to say: "Under these 6 futures, across these 9 dimensions, Port
 
 ## How PPA Works in This App
 
-The app does **NOT** restrict you to PPAs. Each asset has 5 revenue modes you can choose independently:
+Each asset has 5 revenue modes you can choose independently:
 
 | Mode | What happens to revenue |
 |------|------------------------|
@@ -305,4 +277,4 @@ Portfolio example:
 
 ## License
 
-Internal tool — not for redistribution.
+Personal tool — not for redistribution.
