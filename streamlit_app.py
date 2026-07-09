@@ -1,5 +1,5 @@
 # ERCOT Portfolio Simulation and PPA Structuring Tool
-
+# Co-authored with CoCo
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -553,17 +553,45 @@ with tabs[5]:
                                        name=f"Projected Demand ({demand_zone})", line=dict(color="red")))
         fig_load.add_trace(go.Scatter(x=load_df["Year"], y=load_df["Portfolio Capacity (MW)"],
                                        name="Portfolio Capacity", line=dict(color="green")))
-        fig_load.update_layout(title=f"Demand vs Capacity — {demand_zone}", yaxis_title="MW")
+        fig_load.update_layout(title=f"Absolute Demand vs Portfolio — {demand_zone}", yaxis_title="MW")
         st.plotly_chart(fig_load, use_container_width=True)
+
+        # Second chart: Portfolio vs NEW demand growth only
+        st.subheader("Portfolio vs New Demand Growth")
+        st.caption("Shows only the incremental load added to the zone — not the existing baseline.")
+        cumulative_growth = []
+        cum = 0
+        for y in range(years_fwd):
+            growth = zone_organic + zone_dc * (dc_conversion / 100) * (0.1 if y < 3 else 0.05)
+            cum += growth
+            cumulative_growth.append({"Year": y + 1, "Cumulative New Demand (MW)": cum,
+                                       "Portfolio Capacity (MW)": cap})
+
+        growth_df = pd.DataFrame(cumulative_growth)
+        fig_growth = go.Figure()
+        fig_growth.add_trace(go.Scatter(x=growth_df["Year"], y=growth_df["Cumulative New Demand (MW)"],
+                                         name="Cumulative New Demand", line=dict(color="orange"),
+                                         fill="tozeroy", fillcolor="rgba(255,165,0,0.1)"))
+        fig_growth.add_trace(go.Scatter(x=growth_df["Year"], y=growth_df["Portfolio Capacity (MW)"],
+                                         name="Portfolio Capacity", line=dict(color="green", width=3)))
+        fig_growth.update_layout(title=f"Portfolio vs Incremental Load Growth — {demand_zone}",
+                                  yaxis_title="MW")
+        st.plotly_chart(fig_growth, use_container_width=True)
+
+        # When does new demand exceed portfolio?
+        crossover_year = next((row["Year"] for _, row in growth_df.iterrows()
+                               if row["Cumulative New Demand (MW)"] > cap), None)
 
         # Portfolio as % of zone demand
         pct_of_zone = cap / current_peak * 100
         reserve_margin = (cap - load_proj[0]["Peak Demand (MW)"]) / load_proj[0]["Peak Demand (MW)"] * 100
+        pct_of_new = cap / cumulative_growth[-1]["Cumulative New Demand (MW)"] * 100 if cumulative_growth else 0
 
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("Portfolio as % of Zone Peak", f"{pct_of_zone:.1f}%")
-        c2.metric("Year 1 Reserve Contribution", f"{reserve_margin:.1f}%")
-        c3.metric(f"Zone Peak ({demand_zone})", f"{current_peak:,} MW")
+        c2.metric("Portfolio vs 20yr New Demand", f"{pct_of_new:.0f}%")
+        c3.metric("Demand Exceeds Portfolio", f"Year {crossover_year}" if crossover_year else "Never (within horizon)")
+        c4.metric(f"Zone Peak ({demand_zone})", f"{current_peak:,} MW")
 
 # ============================================================
 # TAB 7: FREQUENCY & RELIABILITY
