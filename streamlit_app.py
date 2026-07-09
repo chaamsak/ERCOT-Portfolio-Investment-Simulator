@@ -329,17 +329,15 @@ with tabs[2]:
 
         col1, col2 = st.columns(2)
         with col1:
-            # Show effective CAPEX (base + IDC) per asset
+            # CAPEX breakdown with COD info
             capex_data = [{"Asset": c["name"],
-                           "Base CAPEX ($M)": round(c["base"], 1),
-                           "IDC ($M)": round(c["idc"], 1),
-                           "Effective ($M)": round(c["effective"], 1)}
+                           "CAPEX ($M)": round(c["base"], 1),
+                           "COD (months)": c["deploy_months"]}
                           for c in result["capex_by_asset"]]
-            fig_capex = px.bar(pd.DataFrame(capex_data), x="Asset",
-                               y=["Base CAPEX ($M)", "IDC ($M)"],
-                               barmode="stack",
-                               title="Effective CAPEX by Asset (Base + IDC)",
-                               color_discrete_map={"Base CAPEX ($M)": "#1f77b4", "IDC ($M)": "#ff7f0e"})
+            fig_capex = px.bar(pd.DataFrame(capex_data), x="Asset", y="CAPEX ($M)",
+                               title="CAPEX by Asset",
+                               hover_data=["COD (months)"],
+                               color="Asset")
             st.plotly_chart(fig_capex, use_container_width=True)
 
         with col2:
