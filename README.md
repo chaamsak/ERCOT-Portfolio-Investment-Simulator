@@ -224,7 +224,17 @@ Opens at http://localhost:8501
 
 ---
 
+## Market Data
 
+The app uses public ERCOT market data sourced from [Grid Status](https://gridstatus.io), which aggregates publicly available ERCOT reports with no login required.
+
+Data is loaded automatically — no setup needed. If Grid Status data is unavailable, the app falls back to statistically calibrated synthetic data (see the **About the Synthetic Data** section).
+
+To manually refresh the CSV data files in `data/`, download the latest datasets from https://gridstatus.io and save them as:
+- `data/ercot_lmp.csv` — LMP by settlement point (columns: `timestamp`, `lmp`, `zone`)
+- `data/ercot_load.csv` — System load (columns: `timestamp`, `load_mw`)
+- `data/ercot_fuel_mix.csv` — Generation by fuel (columns: `timestamp`, `gas`, `wind`, `solar`, `nuclear`, `coal`, `hydro`, `other`)
+- `data/ercot_as_prices.csv` — Ancillary service prices (columns: `timestamp`, `as_type`, `price`)
 
 ---
 
@@ -283,38 +293,54 @@ A structured way to say: "Under these 6 futures, across these 9 dimensions, Port
 
 ## How PPA Works in This App
 
-The app does **NOT** restrict you to PPAs. Each asset has 5 revenue modes you can choose independently:
+**You are always the plant OWNER.** You build it, you own it. The revenue mode only describes how you sell the output and who bears market risk:
 
-| Mode | What happens to revenue |
-|------|------------------------|
-| **Merchant** | 100% exposed to market prices. High upside potential, high risk. Revenue = generation × spot price. |
-| **Physical PPA** | You contract X% of output at a fixed $/MWh for Y years. That portion is predictable. The rest (if any) goes to market. |
-| **VPPA** | Financial swap. You get paid your strike price regardless of where you physically deliver. But you eat basis risk (price difference between nodes). |
-| **Tolling** | Buyer pays you a fixed $/kW-month for the right to dispatch your asset. You get guaranteed revenue regardless of whether they use it or not. Common for BESS and peakers. |
-| **Hybrid** | Part PPA (e.g., 60% at $55/MWh) + part merchant (40% at spot). Balances certainty and upside. |
+| Mode | Who bears market risk | Revenue formula | Typical use case |
+|------|-----------------------|-----------------|-----------------|
+| **Merchant** | You (100%) | MW × CF × spot_price | Peakers, BESS arbitrage — you bet on high prices |
+| **Physical PPA** | Shared — contracted % is protected, rest is spot | X% at fixed $/MWh + rest at spot | Solar, wind, CC selling to data centers or utilities |
+| **VPPA** | You bear basis risk | Strike price paid as financial swap, no physical delivery | Wind/solar seller to distant corporate buyer |
+| **Tolling** | Buyer (100%) | Fixed $/kW-month regardless of dispatch | BESS or peaker capacity sold to a utility or data center |
+| **Hybrid** | Shared — only contracted share is protected | X% at PPA + (100-X)% at spot | Any asset wanting partial certainty + partial upside |
+
+### Tolling in plain language:
+
+You build a 200 MW BESS. A data center signs a tolling agreement: they pay you $8/kW-month = $1.6M/month whether they dispatch 0 hours or 24 hours per day. You get a guaranteed monthly check. They decide when to charge and discharge the battery. You have zero exposure to power prices — they do.
+
+**When to use Tolling**: When you want revenue certainty and don't want to trade power. Common for BESS and fast-start peakers where a single large buyer (data center, utility, industrial) wants dedicated capacity.
+
+### Which mode to use when building a new plant:
+
+| If your goal is... | Use |
+|--------------------|-----|
+| Maximize upside, accept risk | Merchant |
+| Stable revenue for project financing | Physical PPA or Tolling |
+| Sell to a distant corporate buyer (ESG) | VPPA |
+| Balance certainty and upside | Hybrid |
+| Dedicated capacity for one buyer | Tolling |
 
 ### You can MIX modes across assets:
 
 ```
 Portfolio example:
-- Solar 400 MW → Physical PPA at $32/MWh × 15yr (low risk, predictable)
+- Solar 400 MW → Physical PPA at $32/MWh × 15yr (stable, bankable)
 - BESS 400 MW → Tolling at $8/kW-mo (guaranteed monthly payment)
 - CC 700 MW → Hybrid: 80% PPA at $55 + 20% merchant (mostly stable)
 - Peaker 300 MW → Merchant (only runs during high prices anyway)
-- Wind 200 MW → VPPA at $28/MWh (financial contract, no physical delivery)
+- Wind 200 MW → VPPA at $28/MWh (financial contract with corporate buyer)
 ```
 
 ### What the app shows you:
 
-1. **Contracted %** — What fraction of total portfolio revenue is under contract (higher = more certain)
-2. **PPA vs Merchant comparison** — Same portfolio, three scenarios: all merchant / current mix / fully contracted. Shows the NPV trade-off.
-3. **Mark-to-Market** — Are your existing PPAs above or below current market? (In the money or underwater?)
-4. **Revenue Certainty Score** — Scores 0-10 based on contracted %. Penalizes concentration risk (too much revenue from one buyer).
-5. **Optimization** — Suggests the optimal % to contract per asset given your volatility tolerance.
+1. **Contracted %** — Fraction of total revenue under contract (higher = more certain)
+2. **PPA vs Merchant comparison** — Same portfolio, three scenarios: all merchant / current mix / fully contracted
+3. **Mark-to-Market** — Are your PPAs above or below today's market price?
+4. **Revenue Certainty Score** — 0-10 based on contracted %. Penalizes concentration risk.
+5. **Optimization** — Recommends optimal contract % per asset for your volatility tolerance
 
-### The key insight the app makes obvious:
+### The key insight:
 
-> PPAs reduce your NPV slightly (you give up price upside) but **dramatically reduce downside risk**. The Scenario tab proves this: under "D: Low Energy" ($25/MWh), fully-merchant portfolios get crushed while contracted ones barely move. The question isn't "PPA yes or no" — it's "how much certainty do you want to pay for?"
+> PPAs and tolling reduce your NPV slightly (you give up upside) but dramatically reduce downside risk. Under Scenario D (low energy, $25/MWh), fully-merchant portfolios lose money while contracted ones remain stable. The question is not "PPA yes or no" — it's "how much certainty are you willing to pay for?"
 
 ---
 
