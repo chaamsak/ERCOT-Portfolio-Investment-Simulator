@@ -47,16 +47,84 @@ Every input instantly updates all outputs. The tool forces you to see trade-offs
 
 | Tab | What it does |
 |-----|--------------|
-| 1. Portfolio | Build portfolios from templates, adjust MW, set revenue mode, save/compare |
+| 1. Portfolio | Build portfolios from 12 asset types, adjust MW, set revenue mode, save/compare |
 | 2. PPA & Offtake | Compare merchant vs contracted, MTM valuation, optimize PPA mix |
-| 3. Executive Summary | KPIs at a glance, CAPEX pie chart, radar score, cumulative cashflow |
+| 3. Executive Summary | KPIs at a glance, CAPEX bar chart, radar score, cumulative cashflow |
 | 4. Financial Model | Revenue waterfall, tornado sensitivity, Monte Carlo, cashflow table |
 | 5. Market Prices | Price duration curve, hourly profile, spike analysis, BESS arbitrage, zone selector |
 | 6. Load vs Capacity | Zone demand forecast with phased portfolio ramp-up, new demand vs capacity gap |
 | 7. Frequency | Inertia calculation, frequency event simulation, AS revenue breakdown |
 | 8. Transmission | Congestion costs, interconnection estimates, VPPA basis risk |
-| 9. Engineering Risks | Thermal derating, gas supply, emissions, supply chain, degradation |
+| 9. Engineering Risks | Thermal derating, gas supply, emissions, supply chain, degradation, seasonal/extreme events |
 | 10. Scenarios | Compare portfolios across 6 market futures with scoring |
+
+---
+
+## Asset Types (12 templates)
+
+| Asset | Type | CAPEX ($/kW) | Build Time | Fuel | CF | CO2 (t/MWh) |
+|-------|------|-------------|------------|------|-----|-------------|
+| BESS (4hr) | Storage | $1,450 | 18 mo | None | 85% | 0 |
+| BESS (2hr) | Storage | $1,100 | 14 mo | None | 90% | 0 |
+| Pumped Storage Hydro | Storage | $2,200 | 84 mo (7yr) | None | 25% | 0 |
+| Combined Cycle (CC) | Baseload | $1,200 | 36 mo | Gas | 85% | 0.37 |
+| Simple Cycle (CT) | Peaker | $700 | 18 mo | Gas | 15% | 0.52 |
+| RICE Peaker | Peaker | $950 | 22 mo | Gas | 20% | 0.45 |
+| Solar | Renewable | $1,050 | 14 mo | None | 26% | 0 |
+| Wind | Renewable | $1,350 | 24 mo | None | 35% | 0 |
+| Hydro (Run-of-River) | Renewable | $2,800 | 48 mo (4yr) | None | 45% | 0 |
+| Nuclear | Baseload | $8,500 | 96 mo (8yr) | Uranium | 92% | 0 |
+| Small Modular Reactor | Baseload | $5,500 | 60 mo (5yr) | Uranium | 95% | 0 |
+| Coal (IGCC) | Baseload | $3,500 | 60 mo (5yr) | Coal | 75% | 0.82 |
+| Flex/DR | Flex | $200 | 6 mo | None | 10% | 0 |
+
+---
+
+## Financial Model Methodology
+
+### How NPV is calculated:
+
+```
+NPV = -CAPEX + Σ (Net_Cashflow_year_t / (1 + WACC)^t)
+```
+
+- CAPEX is charged at year 0 (full amount)
+- Revenue starts only AFTER each asset reaches COD (not year 1)
+- Each asset has independent construction time — solar earns from month 14, CC from month 36
+- PPA escalation clock starts at COD, not project inception
+- Degradation counts from COD (a CC online at year 3 has 0% degradation in year 3)
+
+### Fuel cost formulas:
+
+| Fuel type | Formula | Example at defaults |
+|-----------|---------|---------------------|
+| **Gas** | generation(MWh) × heat_rate(BTU/kWh) × gas_price($/MMBtu) / 1000 | CC 700MW: ~$124M/yr |
+| **Nuclear** | generation(MWh) × $8/MWh (uranium+enrichment+disposal) | Nuclear 1200MW: ~$69M/yr |
+| **Coal** | generation(MWh) × heat_rate(BTU/kWh) × coal_price($/MMBtu) / 1000 | Coal 600MW: ~$87M/yr |
+| **None** | $0 (solar, wind, hydro, BESS) | — |
+
+### Revenue by asset type:
+
+| Asset type | Revenue drivers |
+|------------|----------------|
+| **Storage (BESS/PSH)** | Arbitrage (peak/offpeak spread × duration × RTE) + spike capture + ancillary services |
+| **Baseload (CC/Nuclear/Coal)** | Energy sales (PPA or merchant) − fuel − variable O&M |
+| **Peaker (RICE/CT)** | Energy margin when spot > marginal cost + AS revenue when offline |
+| **Renewable (Solar/Wind/Hydro)** | Energy sales at 85% of spot (shape discount) or PPA price |
+| **Flex/DR** | Capacity fee ($50/kW-yr) + event revenue (20 events × peak price × 4hr) |
+
+### Key modeling assumptions:
+
+| Assumption | Value | Justification |
+|------------|-------|---------------|
+| Default projection | 30 years | Matches CC/nuclear economic life |
+| WACC | 8% | Typical utility-backed project |
+| Energy escalation | 2%/yr | Long-run inflation proxy |
+| Gas escalation | 2%/yr | Aligns with energy escalation |
+| Peak/off-peak ratio | 1.8x | ERCOT typical (peak $72 vs offpeak $44 at $40 avg) |
+| BESS AS rate | $15/MW-hr | ERCOT FFR + RegUp + RRS weighted average |
+| Peaker dispatch threshold | 1.3 × avg price | Dispatches during top-20% hours |
+| Renewable merchant discount | 85% of spot | Shape penalty (solar produces when prices are low) |
 
 ---
 
@@ -84,10 +152,7 @@ Each portfolio is scored 0-10 on 9 dimensions. The methodology is transparent an
 
 ### Data source options:
 
-The app supports three data modes:
-1. **CSV export** from Snowflake (real ERCOT data from Grid Status marketplace listing)
-2. **gridstatus.io API** (requires API key)
-3. **Synthetic fallback** (auto-generated, calibrated to ERCOT characteristics)
+The app uses public ERCOT market data from [Grid Status](https://gridstatus.io). If CSV data files are present in `data/`, those are used. Otherwise falls back to statistically calibrated synthetic data.
 
 ### About the synthetic data:
 
